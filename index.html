@@ -2777,7 +2777,7 @@
                         attempts.push({ id: id, client: client.name, status: status, reason: (resp.playabilityStatus && resp.playabilityStatus.reason) || null, found: !!f });
                         if (f) {
                             return {
-                                client: client.name, url: f.url, itag: f.itag,
+                                client: client.name, ua: client.ua, url: f.url, itag: f.itag,
                                 mimeType: f.mimeType.split(';')[0], bitrate: f.bitrate,
                                 expiresIn: Number((resp.streamingData && resp.streamingData.expiresInSeconds) || 21000)
                             };
@@ -2979,7 +2979,7 @@
                     let url;
                     if (nativeHttp()) {
                         const info = await NR.resolve(id, this._meta(id), this._fmt(), force);
-                        url = info.url;
+                        url = await this._viaProxy(info);
                     } else {
                         url = this._workerUrl(id, force);
                     }
@@ -3003,15 +3003,35 @@
                 }
             }
 
-            _onAudioError() {
+            // Il WebView non puo' mandare gli header giusti a googlevideo (User-Agent del client,
+            // Origin, Referer): lo fa un mini-proxy locale dentro l'app (127.0.0.1), che inoltra
+            // le richieste a blocchi da 1 MB, come il ChunkedDataSource di Echo.
+            async _viaProxy(info) {
+                const np = nativeHttp();
+                if (!np || !np.startProxy) return info.url;
+                if (!this._proxy) this._proxy = await np.startProxy();
+                return `http://127.0.0.1:${this._proxy.port}/s?t=${this._proxy.token}` +
+                       `&ua=${encodeURIComponent(info.ua || '')}&u=${encodeURIComponent(info.url)}`;
+            }
+
+            async _onAudioError() {
                 if (this._started && this._retries < 2) {
                     // Errore a metà brano (URL scaduto, rete): rigenera l'URL e riprende da dove era
                     this._retries++;
                     this._setSrc(this.vid, this._tok, this.a.currentTime || 0, true);
                     return;
                 }
+                const tok = this._tok;
                 const code = this.a.error ? this.a.error.code : '?';
-                this._fallbackToYt('errore audio ' + code);
+                let extra = '';
+                try {
+                    const np = nativeHttp();
+                    if (np && np.proxyInfo) {
+                        const i = await np.proxyInfo();
+                        extra = ' (' + (i.error || ('HTTP ' + i.status)) + ')';
+                    }
+                } catch (e) {}
+                if (this._tok === tok) this._fallbackToYt('errore audio ' + code + extra);
             }
 
             _fallbackToYt(why) {
@@ -3108,6 +3128,45 @@
             getPlaybackQuality() { return this.mode === 'yt' ? this._y('getPlaybackQuality', null) : null; }
             setPlaybackQuality(q) { if (this.mode === 'yt') this._y('setPlaybackQuality', undefined, q); }
         }
+
+        // Nell'app Android il WebView non fa vibrare il telefono con navigator.vibrate:
+        // lo reindirizziamo al plugin nativo (serve il permesso VIBRATE, aggiunto in fase di build).
+        (function nativeVibrate() {
+            const np = nativeHttp();
+            if (!np || !np.vibrate) return;
+            navigator.vibrate = function (p) {
+                try {
+                    if (Array.isArray(p)) Promise.resolve(np.vibrate({ pattern: p })).catch(() => {});
+                    else Promise.resolve(np.vibrate({ ms: Number(p) || 0 })).catch(() => {});
+                } catch (e) {}
+                return true;
+            };
+        })();
+
+        // Barra di stato e barra di navigazione di Android dello stesso colore dell'app
+        // (theme-color, che l'app aggiorna con le skin). Solo nell'app nativa.
+        (function syncNativeBars() {
+            function toHex(c) {
+                if (!c) return null;
+                c = String(c).trim();
+                if (/^#[0-9a-f]{6}$/i.test(c)) return c;
+                if (/^#[0-9a-f]{3}$/i.test(c)) return '#' + c[1] + c[1] + c[2] + c[2] + c[3] + c[3];
+                const m = c.match(/rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/i);
+                if (!m) return null;
+                return '#' + [m[1], m[2], m[3]].map((n) => Math.min(255, +n).toString(16).padStart(2, '0')).join('');
+            }
+            function apply() {
+                const np = nativeHttp();
+                if (!np || !np.setBarColors) return;
+                const meta = document.getElementById('metaThemeColor');
+                const hex = toHex(meta && meta.getAttribute('content'));
+                if (hex) Promise.resolve(np.setBarColors({ color: hex })).catch(() => {});
+            }
+            const meta = document.getElementById('metaThemeColor');
+            if (meta) new MutationObserver(apply).observe(meta, { attributes: true, attributeFilter: ['content'] });
+            window.addEventListener('load', apply);
+            apply();
+        })();
 
         let player = new HybridPlayer();
         // onPlayerReady usa variabili dichiarate più avanti nello script: lo rimandiamo a
@@ -3848,10 +3907,16 @@
             // ricerca ce l'ha ancora.
             if (window.visualViewport) {
                 let vvResizeT = null;
+                // Altezza "piena" senza tastiera. Nel browser la tastiera restringe solo il visual
+                // viewport; nell'app Android (WebView) restringe ANCHE window.innerHeight, quindi
+                // confrontare i due diceva sempre "tastiera chiusa" e toglieva subito il focus.
+                let fullHeight = window.innerHeight;
+                window.addEventListener('resize', () => { fullHeight = Math.max(fullHeight, window.innerHeight); });
+                window.addEventListener('orientationchange', () => { setTimeout(() => { fullHeight = window.innerHeight; }, 500); });
                 window.visualViewport.addEventListener('resize', () => {
                     clearTimeout(vvResizeT);
                     vvResizeT = setTimeout(() => {
-                        const keyboardLikelyClosed = window.visualViewport.height >= window.innerHeight - 40;
+                        const keyboardLikelyClosed = window.visualViewport.height >= fullHeight - 40;
                         if (keyboardLikelyClosed && document.activeElement === searchInput) {
                             searchInput.blur();
                         }

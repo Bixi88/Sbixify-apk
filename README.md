@@ -32,3 +32,9 @@ righe dell'errore e mandale.
 - Salto a metà brano, cambio brano, volume.
 - Schermo spento e app in background: la musica continua?
 - Controlli nella notifica / blocco schermo.
+
+## Aggiornare dopo una modifica
+
+Carica di nuovo (Add file -> Upload files, sovrascrive) solo i file cambiati:
+`index.html`, `NativeHttpPlugin.java`, `package.json`, `capacitor.config.json`.
+Il file del workflow in `.github/workflows` non cambia. Parte da sola una nuova build.
