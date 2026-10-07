@@ -1,0 +1,9 @@
+{
+  "appId": "it.sbixify.app",
+  "appName": "Sbixify",
+  "webDir": "www",
+  "backgroundColor": "#000000",
+  "server": {
+    "androidScheme": "https"
+  }
+}

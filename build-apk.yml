@@ -1,0 +1,72 @@
+name: Compila APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Prepara la cartella web
+        run: |
+          mkdir -p www
+          cp index.html manifest.json 192x192.png 512x512.png www/
+
+      - name: Installa Capacitor
+        run: npm install
+
+      - name: Crea il progetto Android
+        run: npx cap add android
+
+      - name: Plugin nativo, icona, firma e versione
+        run: |
+          PKG_DIR=android/app/src/main/java/it/sbixify/app
+          mkdir -p "$PKG_DIR"
+          cp NativeHttpPlugin.java MainActivity.java "$PKG_DIR/"
+          rm -rf android/app/src/main/res/mipmap-anydpi-v26
+          find android/app/src/main/res -name 'ic_launcher*.png' -exec cp 192x192.png {} \;
+          mkdir -p ~/.android
+          cp debug.keystore ~/.android/debug.keystore
+          sed -i "s/versionCode 1/versionCode ${GITHUB_RUN_NUMBER}/" android/app/build.gradle
+
+      - name: Sincronizza
+        run: npx cap sync android
+
+      - name: Compila l'APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Rinomina l'APK
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk Sbixify.apk
+
+      - name: Pubblica l'APK nelle Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Sbixify - ultima build
+          body: APK di prova di Sbixify. Si aggiorna a ogni modifica del repository.
+          files: Sbixify.apk
+
+      - name: Salva anche come artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sbixify-APK
+          path: Sbixify.apk
