@@ -4,7 +4,7 @@
   "private": true,
   "description": "Sbixify - app Android (Capacitor)",
   "scripts": {
-    "capacitor:sync:after": "node -e \"const fs=require('fs');const p='android/app/src/main/AndroidManifest.xml';if(fs.existsSync(p)){let x=fs.readFileSync(p,'utf8');let c=false;if(!x.includes('usesCleartextTraffic')){x=x.replace('<application','<application android:usesCleartextTraffic=\\\"true\\\"');c=true;}if(!x.includes('android.permission.VIBRATE')){x=x.replace('<application','<uses-permission android:name=\\\"android.permission.VIBRATE\\\" />\\\\n    <application');c=true;}if(c){fs.writeFileSync(p,x);console.log('manifest aggiornato');}}\""
+    "capacitor:sync:after": "node patch-manifest.js"
   },
   "dependencies": {
     "@capacitor/android": "^6.2.0",

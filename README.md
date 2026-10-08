@@ -12,7 +12,7 @@ e mostra un avviso con il motivo.
    (non toccare quello della PWA).
 2. **Add file -> Upload files** e carica tutti questi file:
    `index.html`, `manifest.json`, `192x192.png`, `512x512.png`,
-   `package.json`, `capacitor.config.json`, `debug.keystore`,
+   `package.json`, `capacitor.config.json`, `debug.keystore`, `patch-manifest.js`,
    `NativeHttpPlugin.java`, `MainActivity.java`, `README.md`.
 3. **Add file -> Create new file**. Nel nome scrivi esattamente
    `.github/workflows/build-apk.yml` (le barre creano le cartelle) e incolla
@@ -31,10 +31,13 @@ righe dell'errore e mandale.
 - Se compare l'avviso "Stream diretto non riuscito: ...", leggi il motivo.
 - Salto a metà brano, cambio brano, volume.
 - Schermo spento e app in background: la musica continua?
-- Controlli nella notifica / blocco schermo.
+- Notifica con copertina e pulsanti (precedente / play-pausa / successivo), anche a schermo bloccato.
+  Su Android 13+ la prima volta chiede il permesso per le notifiche: concedilo.
+- Se a schermo spento l'audio si ferma ancora, imposta la batteria dell'app su "Nessuna restrizione"
+  (Impostazioni -> App -> Sbixify -> Batteria).
 
 ## Aggiornare dopo una modifica
 
 Carica di nuovo (Add file -> Upload files, sovrascrive) solo i file cambiati:
-`index.html`, `NativeHttpPlugin.java`, `package.json`, `capacitor.config.json`.
+`index.html`, `NativeHttpPlugin.java`, `package.json`, `patch-manifest.js`, `capacitor.config.json`.
 Il file del workflow in `.github/workflows` non cambia. Parte da sola una nuova build.

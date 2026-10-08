@@ -1702,6 +1702,97 @@
         #driveModeRotate .lyrics-state { font-size: 15px; }
         #driveModeRotate .lyrics-state i { font-size: 26px; }
     </style>
+    <script>
+    // App Android (Capacitor): il WebView non mostra la notifica multimediale e a schermo spento
+    // l'audio si ferma. Tutto quello che l'app imposta su navigator.mediaSession (titolo, artista,
+    // copertina, stato, posizione) viene girato al servizio nativo, che mostra la notifica con i
+    // pulsanti e tiene in vita la riproduzione. I pulsanti richiamano gli stessi gestori che l'app
+    // registra con setActionHandler (play/pause/previoustrack/nexttrack).
+    (function () {
+        var cap = window.Capacitor;
+        if (!(cap && cap.isNativePlatform && cap.isNativePlatform())) return;
+        var np = cap.Plugins && cap.Plugins.NativeHttp;
+        if (!np || !np.setMediaInfo) return;
+
+        if (typeof window.MediaMetadata === 'undefined') {
+            window.MediaMetadata = function (init) {
+                init = init || {};
+                this.title = init.title || '';
+                this.artist = init.artist || '';
+                this.album = init.album || '';
+                this.artwork = init.artwork || [];
+            };
+        }
+
+        var handlers = {};
+        var info = { title: '', artist: '', album: '', artwork: '', playing: false, position: 0, duration: 0 };
+        var metadata = null, playbackState = 'none', lastSend = 0, timer = null;
+
+        function pickArtwork(list) {
+            var best = '', bestArea = 0;
+            (list || []).forEach(function (a) {
+                var m = /(\d+)x(\d+)/.exec(a.sizes || '');
+                var area = m ? m[1] * m[2] : 1;
+                if (area <= 250000 && area >= bestArea) { best = a.src; bestArea = area; }
+            });
+            return best || ((list && list.length) ? list[0].src : '');
+        }
+        function send() {
+            lastSend = Date.now();
+            try { Promise.resolve(np.setMediaInfo(info)).catch(function () {}); } catch (e) {}
+        }
+        function schedule(now) {
+            if (now) { clearTimeout(timer); timer = null; send(); return; }
+            if (Date.now() - lastSend > 3000) { send(); return; }
+            if (!timer) timer = setTimeout(function () { timer = null; send(); }, 3000);
+        }
+
+        var ms = {
+            get metadata() { return metadata; },
+            set metadata(v) {
+                metadata = v || null;
+                info.title = (v && v.title) || '';
+                info.artist = (v && v.artist) || '';
+                info.album = (v && v.album) || '';
+                info.artwork = pickArtwork(v && v.artwork);
+                info.position = 0;
+                info.duration = 0;
+                schedule(true);
+            },
+            get playbackState() { return playbackState; },
+            set playbackState(v) { playbackState = v; info.playing = (v === 'playing'); schedule(true); },
+            setActionHandler: function (action, fn) { if (fn) handlers[action] = fn; else delete handlers[action]; },
+            setPositionState: function (s) {
+                if (s) { info.position = s.position || 0; info.duration = s.duration || 0; }
+                schedule(false);
+            },
+            setMicrophoneActive: function () {},
+            setCameraActive: function () {}
+        };
+        try { Object.defineProperty(navigator, 'mediaSession', { value: ms, configurable: true }); } catch (e) { return; }
+
+        // Pulsanti della notifica / blocco schermo: il plugin li mette in coda, qui li ritiriamo.
+        var map = { play: 'play', pause: 'pause', next: 'nexttrack', previous: 'previoustrack', seek: 'seekto' };
+        if (np.pollActions) {
+            setInterval(function () {
+                try {
+                    Promise.resolve(np.pollActions()).then(function (r) {
+                        ((r && r.actions) || []).forEach(function (e) {
+                            var name = map[e.action];
+                            var h = name && handlers[name];
+                            if (h) { try { h({ action: name, seekTime: e.position }); } catch (err) {} }
+                        });
+                    }).catch(function () {});
+                } catch (e) {}
+            }, 600);
+        }
+
+        // Android 13+: la notifica richiede il permesso (compare la richiesta al primo avvio).
+        window.addEventListener('load', function () {
+            try { if (np.requestNotificationPermission) Promise.resolve(np.requestNotificationPermission()).catch(function () {}); } catch (e) {}
+        });
+    })();
+    </script>
 </head>
 <body class="flex flex-col justify-between hidden py-4 box-border h-full app-body-bg relative">
     <!-- Campi "esca" invisibili e non raggiungibili: servono solo a far sì che Chrome/Android

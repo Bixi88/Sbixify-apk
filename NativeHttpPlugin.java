@@ -1,8 +1,24 @@
 package it.sbixify.app;
 
+import android.Manifest;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.app.Service;
 import android.content.Context;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.content.pm.ServiceInfo;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
+import android.media.MediaMetadata;
+import android.media.session.MediaSession;
+import android.media.session.PlaybackState;
 import android.os.Build;
+import android.os.IBinder;
+import android.os.PowerManager;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.os.VibratorManager;
@@ -33,6 +49,7 @@ import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Iterator;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -46,6 +63,8 @@ import java.util.regex.Pattern;
  *  - proxyInfo():     ultimo stato HTTP del proxy (per la diagnostica).
  *  - setBarColors():  colore di barra di stato e barra di navigazione.
  *  - vibrate():       vibrazione (il WebView non supporta navigator.vibrate).
+ *  - setMediaInfo():  notifica multimediale + servizio in primo piano (la musica continua a schermo
+ *                     spento) con i pulsanti precedente / play-pausa / successivo.
  */
 @CapacitorPlugin(name = "NativeHttp")
 public class NativeHttpPlugin extends Plugin {
@@ -57,6 +76,41 @@ public class NativeHttpPlugin extends Plugin {
     private String proxyToken = "";
     private volatile int lastStatus = 0;
     private volatile String lastError = "";
+
+    private static NativeHttpPlugin instanceRef;
+
+    @Override
+    public void load() {
+        instanceRef = this;
+    }
+
+    /**
+     * Pulsanti della notifica / blocco schermo -> JavaScript. Le azioni restano in coda e la pagina
+     * le ritira con pollActions() (piu' semplice e affidabile di un listener nel WebView).
+     */
+    private final ConcurrentLinkedQueue<String[]> actionQueue = new ConcurrentLinkedQueue<String[]>();
+
+    void emit(String action, double positionSec) {
+        actionQueue.add(new String[]{action, String.valueOf(positionSec)});
+        while (actionQueue.size() > 20) {
+            actionQueue.poll();
+        }
+    }
+
+    @PluginMethod
+    public void pollActions(PluginCall call) {
+        JSArray arr = new JSArray();
+        String[] a;
+        while ((a = actionQueue.poll()) != null) {
+            JSObject o = new JSObject();
+            o.put("action", a[0]);
+            o.put("position", Double.parseDouble(a[1]));
+            arr.put(o);
+        }
+        JSObject res = new JSObject();
+        res.put("actions", arr);
+        call.resolve(res);
+    }
 
     // ------------------------------------------------------------------ request()
 
@@ -389,6 +443,350 @@ public class NativeHttpPlugin extends Plugin {
             call.resolve();
         } catch (Exception e) {
             call.reject(String.valueOf(e.getMessage()));
+        }
+    }
+
+    // ------------------------------------------------------------------ notifica multimediale
+
+    static class MediaInfo {
+        String title = "";
+        String artist = "";
+        String album = "";
+        String artwork = "";
+        boolean playing = false;
+        long positionMs = 0;
+        long durationMs = 0;
+    }
+
+    @PluginMethod
+    public void setMediaInfo(PluginCall call) {
+        try {
+            MediaInfo info = new MediaInfo();
+            info.title = call.getString("title", "");
+            info.artist = call.getString("artist", "");
+            info.album = call.getString("album", "");
+            info.artwork = call.getString("artwork", "");
+            info.playing = Boolean.TRUE.equals(call.getBoolean("playing", false));
+            Double pos = call.getDouble("position", 0.0);
+            Double dur = call.getDouble("duration", 0.0);
+            info.positionMs = (long) (pos.doubleValue() * 1000.0);
+            info.durationMs = (long) (dur.doubleValue() * 1000.0);
+            MediaService.submit(getContext(), info);
+            call.resolve();
+        } catch (Exception e) {
+            call.reject(String.valueOf(e.getMessage()));
+        }
+    }
+
+    @PluginMethod
+    public void stopMedia(PluginCall call) {
+        try {
+            getContext().stopService(new Intent(getContext(), MediaService.class));
+            call.resolve();
+        } catch (Exception e) {
+            call.reject(String.valueOf(e.getMessage()));
+        }
+    }
+
+    @PluginMethod
+    public void requestNotificationPermission(PluginCall call) {
+        try {
+            if (Build.VERSION.SDK_INT >= 33
+                    && getContext().checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED) {
+                getActivity().requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 4711);
+            }
+            call.resolve();
+        } catch (Exception e) {
+            call.reject(String.valueOf(e.getMessage()));
+        }
+    }
+
+    /**
+     * Servizio in primo piano di tipo "mediaPlayback": tiene vivo il processo (e quindi l'audio del
+     * WebView) a schermo spento e disegna la notifica multimediale con i controlli.
+     */
+    public static class MediaService extends Service {
+        static final String CHANNEL_ID = "sbixify_playback";
+        static final int NOTIF_ID = 4711;
+        static final String ACT_PLAY = "it.sbixify.app.PLAY";
+        static final String ACT_PAUSE = "it.sbixify.app.PAUSE";
+        static final String ACT_NEXT = "it.sbixify.app.NEXT";
+        static final String ACT_PREV = "it.sbixify.app.PREV";
+        static final String ACT_STOP = "it.sbixify.app.STOP";
+
+        static volatile MediaService instance;
+        static volatile MediaInfo pending;
+
+        private MediaSession session;
+        private PowerManager.WakeLock wakeLock;
+        private Bitmap art;
+        private String artUrl = "";
+        private boolean fg = false;
+        private MediaInfo current = new MediaInfo();
+
+        static void submit(Context ctx, MediaInfo info) {
+            pending = info;
+            MediaService s = instance;
+            if (s != null) {
+                s.apply(info);
+                return;
+            }
+            if (!info.playing) {
+                return; // niente notifica finche' la musica non parte
+            }
+            try {
+                Intent i = new Intent(ctx, MediaService.class);
+                if (Build.VERSION.SDK_INT >= 26) {
+                    ctx.startForegroundService(i);
+                } else {
+                    ctx.startService(i);
+                }
+            } catch (Exception e) {
+                // app in background: Android non permette di avviare il servizio
+            }
+        }
+
+        private static void send(String action, double pos) {
+            NativeHttpPlugin p = NativeHttpPlugin.instanceRef;
+            if (p != null) {
+                p.emit(action, pos);
+            }
+        }
+
+        @Override
+        public void onCreate() {
+            super.onCreate();
+            instance = this;
+            if (Build.VERSION.SDK_INT >= 26) {
+                NotificationChannel ch = new NotificationChannel(CHANNEL_ID, "Riproduzione", NotificationManager.IMPORTANCE_LOW);
+                ch.setShowBadge(false);
+                notificationManager().createNotificationChannel(ch);
+            }
+            session = new MediaSession(this, "Sbixify");
+            session.setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS | MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS);
+            session.setCallback(new MediaSession.Callback() {
+                @Override
+                public void onPlay() {
+                    send("play", 0);
+                }
+
+                @Override
+                public void onPause() {
+                    send("pause", 0);
+                }
+
+                @Override
+                public void onSkipToNext() {
+                    send("next", 0);
+                }
+
+                @Override
+                public void onSkipToPrevious() {
+                    send("previous", 0);
+                }
+
+                @Override
+                public void onSeekTo(long pos) {
+                    send("seek", pos / 1000.0);
+                }
+            });
+            session.setActive(true);
+            PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "sbixify:playback");
+            wakeLock.setReferenceCounted(false);
+        }
+
+        @Override
+        public int onStartCommand(Intent intent, int flags, int startId) {
+            String action = intent != null ? intent.getAction() : null;
+            if (ACT_STOP.equals(action)) {
+                stopSelf();
+                return START_NOT_STICKY;
+            }
+            if (ACT_PLAY.equals(action)) {
+                send("play", 0);
+            } else if (ACT_PAUSE.equals(action)) {
+                send("pause", 0);
+            } else if (ACT_NEXT.equals(action)) {
+                send("next", 0);
+            } else if (ACT_PREV.equals(action)) {
+                send("previous", 0);
+            }
+            MediaInfo p = pending;
+            apply(p != null ? p : current);
+            return START_NOT_STICKY;
+        }
+
+        @Override
+        public IBinder onBind(Intent intent) {
+            return null;
+        }
+
+        @Override
+        public void onTaskRemoved(Intent rootIntent) {
+            stopSelf();
+            super.onTaskRemoved(rootIntent);
+        }
+
+        @Override
+        public void onDestroy() {
+            instance = null;
+            try {
+                if (wakeLock != null && wakeLock.isHeld()) {
+                    wakeLock.release();
+                }
+                if (session != null) {
+                    session.release();
+                }
+            } catch (Exception ignored) {
+            }
+            super.onDestroy();
+        }
+
+        private NotificationManager notificationManager() {
+            return (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        }
+
+        synchronized void apply(MediaInfo info) {
+            current = info;
+            updateSession(info);
+            ensureArt(info.artwork);
+            Notification n = buildNotification(info);
+            if (info.playing) {
+                startFg(n);
+                if (!wakeLock.isHeld()) {
+                    wakeLock.acquire(6L * 60L * 60L * 1000L);
+                }
+            } else {
+                if (!fg) {
+                    startFg(n); // dopo startForegroundService Android pretende comunque startForeground
+                }
+                stopForeground(false);
+                fg = false;
+                notificationManager().notify(NOTIF_ID, n);
+                if (wakeLock.isHeld()) {
+                    wakeLock.release();
+                }
+            }
+        }
+
+        private void startFg(Notification n) {
+            if (Build.VERSION.SDK_INT >= 29) {
+                startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
+            } else {
+                startForeground(NOTIF_ID, n);
+            }
+            fg = true;
+        }
+
+        private void updateSession(MediaInfo info) {
+            MediaMetadata.Builder mb = new MediaMetadata.Builder()
+                    .putString(MediaMetadata.METADATA_KEY_TITLE, info.title)
+                    .putString(MediaMetadata.METADATA_KEY_ARTIST, info.artist)
+                    .putString(MediaMetadata.METADATA_KEY_ALBUM, info.album)
+                    .putLong(MediaMetadata.METADATA_KEY_DURATION, info.durationMs);
+            if (art != null) {
+                mb.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, art);
+            }
+            session.setMetadata(mb.build());
+
+            long actions = PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PAUSE | PlaybackState.ACTION_PLAY_PAUSE
+                    | PlaybackState.ACTION_SKIP_TO_NEXT | PlaybackState.ACTION_SKIP_TO_PREVIOUS
+                    | PlaybackState.ACTION_SEEK_TO;
+            PlaybackState ps = new PlaybackState.Builder()
+                    .setActions(actions)
+                    .setState(info.playing ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED,
+                            info.positionMs, info.playing ? 1.0f : 0.0f)
+                    .build();
+            session.setPlaybackState(ps);
+        }
+
+        private void ensureArt(final String url) {
+            if (url == null || url.length() == 0) {
+                art = null;
+                artUrl = "";
+                return;
+            }
+            if (url.equals(artUrl)) {
+                return;
+            }
+            artUrl = url;
+            art = null;
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    HttpURLConnection c = null;
+                    try {
+                        c = (HttpURLConnection) new URL(url).openConnection();
+                        c.setConnectTimeout(10000);
+                        c.setReadTimeout(10000);
+                        InputStream is = c.getInputStream();
+                        Bitmap bmp = BitmapFactory.decodeStream(is);
+                        is.close();
+                        if (bmp != null && url.equals(artUrl)) {
+                            art = bmp;
+                            apply(current); // ridisegna la notifica con la copertina
+                        }
+                    } catch (Exception ignored) {
+                    } finally {
+                        if (c != null) {
+                            c.disconnect();
+                        }
+                    }
+                }
+            }).start();
+        }
+
+        private PendingIntent servicePi(String action, int code) {
+            Intent i = new Intent(this, MediaService.class);
+            i.setAction(action);
+            int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+            if (Build.VERSION.SDK_INT >= 23) {
+                flags |= PendingIntent.FLAG_IMMUTABLE;
+            }
+            return PendingIntent.getService(this, code, i, flags);
+        }
+
+        private PendingIntent openAppPi() {
+            Intent li = getPackageManager().getLaunchIntentForPackage(getPackageName());
+            int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+            if (Build.VERSION.SDK_INT >= 23) {
+                flags |= PendingIntent.FLAG_IMMUTABLE;
+            }
+            return PendingIntent.getActivity(this, 0, li, flags);
+        }
+
+        private Notification buildNotification(MediaInfo info) {
+            Notification.Builder b;
+            if (Build.VERSION.SDK_INT >= 26) {
+                b = new Notification.Builder(this, CHANNEL_ID);
+            } else {
+                b = new Notification.Builder(this);
+            }
+            b.setSmallIcon(android.R.drawable.stat_sys_headset)
+                    .setContentTitle(info.title.length() > 0 ? info.title : "Sbixify")
+                    .setContentText(info.artist)
+                    .setOnlyAlertOnce(true)
+                    .setShowWhen(false)
+                    .setOngoing(info.playing)
+                    .setVisibility(Notification.VISIBILITY_PUBLIC)
+                    .setContentIntent(openAppPi())
+                    .setDeleteIntent(servicePi(ACT_STOP, 5));
+            if (art != null) {
+                b.setLargeIcon(art);
+            }
+            b.addAction(android.R.drawable.ic_media_previous, "Precedente", servicePi(ACT_PREV, 1));
+            if (info.playing) {
+                b.addAction(android.R.drawable.ic_media_pause, "Pausa", servicePi(ACT_PAUSE, 2));
+            } else {
+                b.addAction(android.R.drawable.ic_media_play, "Riproduci", servicePi(ACT_PLAY, 2));
+            }
+            b.addAction(android.R.drawable.ic_media_next, "Successivo", servicePi(ACT_NEXT, 3));
+            b.setStyle(new Notification.MediaStyle()
+                    .setMediaSession(session.getSessionToken())
+                    .setShowActionsInCompactView(0, 1, 2));
+            return b.build();
         }
     }
 
