@@ -3004,10 +3004,11 @@
                 });
                 a.addEventListener('loadedmetadata', () => {
                     if (this.mode !== 'audio') return;
-                    if (this._resumeAt != null) {            // ripresa dopo un errore a metà brano
+                    if (this._resumeAt != null) {            // ripresa da una posizione (errore a metà brano, o riapertura app)
                         try { a.currentTime = this._resumeAt; } catch (e) {}
                         this._resumeAt = null;
                         if (this._wantPlay) a.play().catch(() => {});
+                        else this._emit(PS.CUED);
                     } else if (!this._wantPlay) {
                         this._emit(PS.CUED);
                     }
@@ -3017,7 +3018,11 @@
                 });
             }
 
-            _emit(s) { this.state = s; onPlayerStateChange({ data: s, target: this }); }
+            _emit(s) {
+                this.state = s;
+                if (s === PS.PAUSED && typeof saveResumePosition === 'function') saveResumePosition();
+                onPlayerStateChange({ data: s, target: this });
+            }
 
             _fmt() { return this.a.canPlayType('audio/webm; codecs="opus"') ? '' : 'm4a'; }
 
@@ -3048,8 +3053,9 @@
                 this.a.load();
             }
 
-            _start(id, autoplay) {
+            _start(id, autoplay, startSec) {
                 clearTimeout(this._watchdog);
+                this._startSec = startSec > 0 ? startSec : 0;
                 if (this.mode === 'yt' && this.yt && this.ytReady) { try { this.yt.stopVideo(); } catch (e) {} }
                 this.mode = 'audio';
                 this.vid = id;
@@ -3063,7 +3069,7 @@
                 a.muted = this._muted;
                 if (nativeHttp()) this._clearSrc(); // il brano precedente si ferma subito, il nuovo arriva dopo la risoluzione
                 Promise.resolve().then(() => { if (this._tok === tok && this.mode === 'audio') this._emit(PS.UNSTARTED); });
-                this._setSrc(id, tok, null, false);
+                this._setSrc(id, tok, this._startSec > 0 ? this._startSec : null, false);
                 if (autoplay) {
                     this._watchdog = setTimeout(() => {
                         if (this._tok === tok && this.mode === 'audio' && !this._started) this._fallbackToYt('timeout');
@@ -3147,8 +3153,9 @@
                 this._withYt((yt) => {
                     if (this.mode !== 'yt' || this.vid !== id) return;
                     try { yt.setVolume(Math.round(this._vol * 100)); this._muted ? yt.mute() : yt.unMute(); } catch (e) {}
-                    if (want) yt.loadVideoById({ videoId: id, suggestedQuality: 'tiny' });
-                    else yt.cueVideoById({ videoId: id, suggestedQuality: 'tiny' });
+                    const st = this._startSec || 0;
+                    if (want) yt.loadVideoById({ videoId: id, suggestedQuality: 'tiny', startSeconds: st });
+                    else yt.cueVideoById({ videoId: id, suggestedQuality: 'tiny', startSeconds: st });
                 });
             }
 
@@ -3185,8 +3192,8 @@
             }
 
             // ---- API compatibile con YT.Player (solo la parte usata da Sbixify) ----
-            loadVideoById(o) { this._start(typeof o === 'string' ? o : o.videoId, true); }
-            cueVideoById(o)  { this._start(typeof o === 'string' ? o : o.videoId, false); }
+            loadVideoById(o) { this._start(typeof o === 'string' ? o : o.videoId, true, typeof o === 'string' ? 0 : (Number(o.startSeconds) || 0)); }
+            cueVideoById(o)  { this._start(typeof o === 'string' ? o : o.videoId, false, typeof o === 'string' ? 0 : (Number(o.startSeconds) || 0)); }
             playVideo() {
                 if (this.mode === 'yt') { this._y('playVideo'); return; }
                 this._wantPlay = true;
@@ -3284,6 +3291,39 @@
         }
 
         let player = new HybridPlayer();
+        // --- POSIZIONE DI RIPRESA ---
+        // L'app salvava solo QUALE brano stava suonando: riaprendola ripartiva dal secondo 0.
+        // Ora salviamo anche il punto raggiunto (ogni pochi secondi mentre suona, in pausa e quando
+        // l'app va in background) e lo ripristiniamo alla riapertura, sempre in pausa.
+        const LAST_POS_KEY = 'sbixify_last_pos';
+        function saveResumePosition() {
+            try {
+                if (!player || !player.getVideoData) return;
+                const id = player.getVideoData().video_id;
+                const t = player.getCurrentTime();
+                if (id && t > 1) localStorage.setItem(LAST_POS_KEY, JSON.stringify({ id: id, t: Math.floor(t) }));
+            } catch (e) {}
+        }
+        function getSavedStart(id) {
+            try {
+                const r = JSON.parse(localStorage.getItem(LAST_POS_KEY));
+                return (r && r.id === id && r.t > 3) ? r.t : 0;
+            } catch (e) { return 0; }
+        }
+        setInterval(() => { try { if (player && player.getPlayerState() === PS.PLAYING) saveResumePosition(); } catch (e) {} }, 4000);
+        document.addEventListener('visibilitychange', () => { if (document.hidden) saveResumePosition(); });
+        window.addEventListener('pagehide', saveResumePosition);
+
+        // Seconda pressione di "indietro" in home (popup "tocca di nuovo per uscire"): nell'app Android
+        // chiude davvero l'app e toglie la notifica; nel browser non fa nulla (ci pensa il browser).
+        function nativeExitApp() {
+            const np = nativeHttp();
+            if (!np || !np.exitApp) return;
+            saveResumePosition();
+            try { Promise.resolve(np.exitApp()).catch(() => {}); } catch (e) {}
+        }
+
+
         // onPlayerReady usa variabili dichiarate più avanti nello script: lo rimandiamo a
         // fine esecuzione (come faceva l'IFrame API, che era comunque asincrona).
         setTimeout(() => onPlayerReady({ target: player }), 0);
@@ -3363,7 +3403,7 @@
                     if (pendingAutoplay) {
                         player.loadVideoById({ videoId: pendingCueTrackId, suggestedQuality: 'tiny' });
                     } else {
-                        player.cueVideoById({ videoId: pendingCueTrackId, suggestedQuality: 'tiny' });
+                        player.cueVideoById({ videoId: pendingCueTrackId, suggestedQuality: 'tiny', startSeconds: getSavedStart(pendingCueTrackId) });
                     }
                 } catch (err) {}
                 pendingCueTrackId = null;
@@ -3650,6 +3690,7 @@
                 if (!handled && !(viewsSlider && viewsSlider.classList.contains('showing-results'))) {
                     if (exitOnBackArmed) {
                         clearTimeout(exitOnBackArmedTimeout);
+                        nativeExitApp();
                         return;
                     }
                     exitOnBackArmed = true;
@@ -5725,7 +5766,7 @@
                         if (pendingAutoplay) {
                             player.loadVideoById({ videoId: track.id, suggestedQuality: 'tiny' });
                         } else {
-                            player.cueVideoById({ videoId: track.id, suggestedQuality: 'tiny' });
+                            player.cueVideoById({ videoId: track.id, suggestedQuality: 'tiny', startSeconds: getSavedStart(track.id) });
                         }
                     } catch (err) {}
                 } else {

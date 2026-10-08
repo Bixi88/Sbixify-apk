@@ -65,6 +65,7 @@ import java.util.regex.Pattern;
  *  - setBarColors():  colore di barra di stato e barra di navigazione.
  *  - vibrate():       vibrazione (il WebView non supporta navigator.vibrate).
  *  - setScreenMode(): orientamento orizzontale forzato + schermo sempre acceso (schermata testi).
+ *  - exitApp():       chiusura completa (ferma notifica e servizio).
  *  - setMediaInfo():  notifica multimediale + servizio in primo piano (la musica continua a schermo
  *                     spento) con i pulsanti precedente / play-pausa / successivo.
  */
@@ -393,6 +394,11 @@ public class NativeHttpPlugin extends Plugin {
             if (serverSocket != null) {
                 serverSocket.close();
             }
+        } catch (Exception ignored) {
+        }
+        try {
+            // La pagina (e con lei l'audio) non esiste piu': niente notifica "fantasma" che sembra suonare
+            getContext().stopService(new Intent(getContext(), MediaService.class));
         } catch (Exception ignored) {
         }
         super.handleOnDestroy();
@@ -789,6 +795,25 @@ public class NativeHttpPlugin extends Plugin {
                     .setMediaSession(session.getSessionToken())
                     .setShowActionsInCompactView(0, 1, 2));
             return b.build();
+        }
+    }
+
+    // ------------------------------------------------------------------ uscita
+
+    /** Chiude l'app: ferma il servizio (e quindi la notifica) e termina l'attivita'. */
+    @PluginMethod
+    public void exitApp(PluginCall call) {
+        try {
+            getContext().stopService(new Intent(getContext(), MediaService.class));
+            call.resolve();
+            getActivity().runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    getActivity().finishAndRemoveTask();
+                }
+            });
+        } catch (Exception e) {
+            call.reject(String.valueOf(e.getMessage()));
         }
     }
 
