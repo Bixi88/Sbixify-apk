@@ -811,7 +811,7 @@ public class NativeHttpPlugin extends Plugin {
             public void run() {
                 try {
                     Window w = getActivity().getWindow();
-                    w.addFlags(WindowManager.LayoutParams.FLAG_DRAW_SYSTEM_BAR_BACKGROUNDS);
+                    w.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
                     w.setStatusBarColor(color);
                     w.setNavigationBarColor(color);
 
