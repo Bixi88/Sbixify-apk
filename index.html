@@ -1680,6 +1680,15 @@
             padding: 10px 0;
             box-sizing: border-box;
         }
+        /* Schermo GIA' orizzontale (nell'app Android l'orientamento viene bloccato davvero): niente
+           rotazione finta, il riquadro riempie semplicemente lo schermo. */
+        @media (orientation: landscape) {
+            #driveModeRotate {
+                width: 100vw;
+                height: 100vh;
+                transform: translate(-50%, -50%);
+            }
+        }
         /* Testo molto più grande di quello del pannello normale (qui si legge al volo,
            da lontano, mentre si guida) - stessa classe .lyrics-line/.lyrics-line.active
            di sempre, quindi eredita automaticamente i colori giusti per ogni skin
@@ -3250,14 +3259,29 @@
                 const np = nativeHttp();
                 if (!np || !np.setBarColors) return;
                 const meta = document.getElementById('metaThemeColor');
-                const hex = toHex(meta && meta.getAttribute('content'));
+                // Schermata testi (modalita' auto) aperta: barre sempre nere, qualunque sia la skin
+                const hex = window.__sbxLyricsOpen ? '#000000' : toHex(meta && meta.getAttribute('content'));
                 if (hex) Promise.resolve(np.setBarColors({ color: hex })).catch(() => {});
             }
+            window.__sbxApplyBars = apply;
             const meta = document.getElementById('metaThemeColor');
             if (meta) new MutationObserver(apply).observe(meta, { attributes: true, attributeFilter: ['content'] });
             window.addEventListener('load', apply);
             apply();
         })();
+
+        // Schermata testi a schermo intero (Modalita' Auto) nell'app Android: orientamento
+        // orizzontale vero e bloccato, schermo sempre acceso, barre di sistema nere.
+        // In uscita si torna a come era (barre del colore della skin, rotazione libera).
+        function nativeLyricsScreen(on) {
+            const np = nativeHttp();
+            if (!np) return;
+            window.__sbxLyricsOpen = !!on;
+            try {
+                if (np.setScreenMode) Promise.resolve(np.setScreenMode({ landscape: !!on, keepOn: !!on })).catch(() => {});
+                if (window.__sbxApplyBars) window.__sbxApplyBars();
+            } catch (e) {}
+        }
 
         let player = new HybridPlayer();
         // onPlayerReady usa variabili dichiarate più avanti nello script: lo rimandiamo a
@@ -4649,7 +4673,8 @@
             driveModeOpen = true;
             document.getElementById('driveModeRotate').appendChild(scroll);
             document.getElementById('driveMode').classList.add('active');
-            requestDriveModeFullscreen();
+            if (nativeHttp()) nativeLyricsScreen(true);   // app Android: orizzontale vero, sempre acceso, barre nere
+            else requestDriveModeFullscreen();
             hapticFeedback();
             window.history.pushState({ page: 'driveMode' }, 'DriveMode');
         }
@@ -4714,6 +4739,7 @@
             const panel = document.getElementById('lyricsPanel');
             if (scroll && panel) panel.appendChild(scroll);
             document.getElementById('driveMode')?.classList.remove('active');
+            if (nativeHttp()) nativeLyricsScreen(false);
             exitDriveModeFullscreen();
         }
 
@@ -9342,117 +9368,6 @@
             document.getElementById('apiErrorBadge')?.classList.remove('hidden');
             document.getElementById('modalApiBadgeError').classList.remove('hidden');
         }
-    </script>
-    <!-- Aggiornamenti automatici (solo app Android): all'avvio controlla la Release di GitHub e,
-         se c'e' una build piu' recente, mostra un avviso; "Aggiorna" scarica l'APK e apre l'installer. -->
-    <script>
-    (function () {
-        var cap = window.Capacitor;
-        if (!(cap && cap.isNativePlatform && cap.isNativePlatform())) return;
-        var np = cap.Plugins && cap.Plugins.NativeHttp;
-        if (!np) return;
-
-        var API = 'https://api.github.com/repos/Bixi88/Sbixify-apk/releases/tags/latest';
-        var box = null, downloaded = false, busy = false, lastCheck = 0, found = null;
-
-        function el(html) { var d = document.createElement('div'); d.innerHTML = html; return d.firstElementChild; }
-
-        function ui(title, text, btnLabel, showBar) {
-            if (!box) {
-                box = el(
-                    '<div id="sbx-upd" style="position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.72);padding:24px;">' +
-                    '<div style="width:100%;max-width:340px;background:var(--bg-card,#161616);color:#fff;border:1px solid var(--accent,#FF9A21);border-radius:18px;padding:20px;box-shadow:0 10px 40px rgba(0,0,0,.6);font-family:inherit;">' +
-                    '<div id="sbx-upd-t" style="font-size:16px;font-weight:700;color:var(--accent,#FF9A21);margin-bottom:8px;"></div>' +
-                    '<div id="sbx-upd-x" style="font-size:13px;line-height:1.45;opacity:.9;"></div>' +
-                    '<div id="sbx-upd-b" style="display:none;height:6px;border-radius:3px;background:rgba(255,255,255,.15);margin-top:14px;overflow:hidden;"><div id="sbx-upd-p" style="height:100%;width:0;background:var(--accent,#FF9A21);transition:width .3s;"></div></div>' +
-                    '<div style="display:flex;gap:10px;margin-top:18px;">' +
-                    '<button id="sbx-upd-n" style="flex:1;padding:11px;border-radius:12px;border:1px solid rgba(255,255,255,.25);background:transparent;color:#fff;font-size:13px;">Più tardi</button>' +
-                    '<button id="sbx-upd-y" style="flex:1;padding:11px;border-radius:12px;border:0;background:var(--accent,#FF9A21);color:#000;font-weight:700;font-size:13px;"></button>' +
-                    '</div></div></div>');
-                document.body.appendChild(box);
-                box.querySelector('#sbx-upd-n').onclick = close;
-                box.querySelector('#sbx-upd-y').onclick = onMain;
-            }
-            box.querySelector('#sbx-upd-t').textContent = title;
-            box.querySelector('#sbx-upd-x').textContent = text;
-            box.querySelector('#sbx-upd-b').style.display = showBar ? 'block' : 'none';
-            var y = box.querySelector('#sbx-upd-y');
-            y.textContent = btnLabel || '';
-            y.style.display = btnLabel ? 'block' : 'none';
-            y.disabled = false;
-        }
-
-        function close() { if (box) { box.remove(); box = null; } }
-        function progress(p) { var b = box && box.querySelector('#sbx-upd-p'); if (b) b.style.width = p + '%'; }
-
-        function install() {
-            Promise.resolve(np.installApk()).then(function (r) {
-                if (r && r.needsPermission) {
-                    ui('Serve un permesso', 'Nella schermata che si è aperta attiva «Consenti da questa fonte» per Sbixify, poi torna qui e premi Installa.', 'Installa', false);
-                } else {
-                    ui('Quasi fatto', 'Conferma l\'installazione nella schermata di Android: l\'app si riavvia aggiornata.', '', false);
-                    setTimeout(close, 6000);
-                }
-            }).catch(function (e) {
-                ui('Installazione non riuscita', String((e && e.message) || e), 'Riprova', false);
-                downloaded = false;
-            });
-        }
-
-        function download() {
-            if (busy || !found) return;
-            busy = true;
-            ui('Scarico l\'aggiornamento…', 'Build ' + found.latest + ' in download.', '', true);
-            progress(0);
-            Promise.resolve(np.downloadApk({ url: found.url })).then(function () {
-                var t = setInterval(function () {
-                    Promise.resolve(np.updateStatus()).then(function (s) {
-                        if (!s) return;
-                        progress(s.progress || 0);
-                        if (s.done) {
-                            clearInterval(t); busy = false; downloaded = true;
-                            install();
-                        } else if (!s.running && s.error) {
-                            clearInterval(t); busy = false;
-                            ui('Download non riuscito', s.error, 'Riprova', false);
-                        }
-                    }).catch(function () {});
-                }, 400);
-            }).catch(function (e) {
-                busy = false;
-                ui('Download non riuscito', String((e && e.message) || e), 'Riprova', false);
-            });
-        }
-
-        function onMain() { if (downloaded) install(); else download(); }
-
-        function check() {
-            if (!np.getAppInfo || busy) return;
-            lastCheck = Date.now();
-            Promise.resolve(np.getAppInfo()).then(function (info) {
-                var cur = Number(info && info.versionCode) || 0;
-                return Promise.resolve(np.request({
-                    url: API, method: 'GET', timeout: 15000,
-                    headers: { 'Accept': 'application/vnd.github+json', 'User-Agent': 'Sbixify-App' }
-                })).then(function (r) {
-                    if (!r || r.status !== 200) return;
-                    var j = JSON.parse(r.data);
-                    var m = /build:\s*(\d+)/.exec(j.body || '');
-                    var latest = m ? Number(m[1]) : 0;
-                    var asset = (j.assets || []).filter(function (a) { return a.name === 'Sbixify.apk'; })[0];
-                    if (!latest || !asset || latest <= cur) return;
-                    found = { latest: latest, url: asset.browser_download_url };
-                    downloaded = false;
-                    ui('Aggiornamento disponibile', 'È pronta la build ' + latest + ' (tu hai la ' + cur + '). Vuoi scaricarla e installarla ora?', 'Aggiorna', false);
-                });
-            }).catch(function () { /* nessuna rete o app vecchia: niente avviso */ });
-        }
-
-        window.addEventListener('load', function () { setTimeout(check, 4000); });
-        document.addEventListener('visibilitychange', function () {
-            if (document.visibilityState === 'visible' && !box && Date.now() - lastCheck > 60 * 60 * 1000) check();
-        });
-    })();
     </script>
 </body>
 </html>
