@@ -62,7 +62,9 @@ jobs:
         with:
           tag_name: latest
           name: Sbixify - ultima build
-          body: APK di prova di Sbixify. Si aggiorna a ogni modifica del repository.
+          body: |
+            build:${{ github.run_number }}
+            APK di Sbixify. Si aggiorna a ogni modifica del repository.
           files: Sbixify.apk
 
       - name: Salva anche come artifact
