@@ -36,8 +36,17 @@ righe dell'errore e mandale.
 - Se a schermo spento l'audio si ferma ancora, imposta la batteria dell'app su "Nessuna restrizione"
   (Impostazioni -> App -> Sbixify -> Batteria).
 
+## Aggiornamenti automatici
+
+All'apertura l'app controlla (dopo ~4 secondi) la Release `latest` del repository. Se la build
+pubblicata e' piu' recente di quella installata compare un avviso: **Aggiorna** scarica l'APK
+dentro l'app e apre l'installer di Android (la prima volta chiede di consentire l'installazione
+da Sbixify; poi basta confermare). Il numero di build e' scritto nella descrizione della Release
+(`build:N`) ed e' anche il `versionCode` dell'APK. L'aggiornamento si installa sopra solo se
+l'APK e' firmato con lo stesso `debug.keystore`: non cambiarlo mai.
+
 ## Aggiornare dopo una modifica
 
 Carica di nuovo (Add file -> Upload files, sovrascrive) solo i file cambiati:
 `index.html`, `NativeHttpPlugin.java`, `package.json`, `patch-manifest.js`, `capacitor.config.json`.
-Il file del workflow in `.github/workflows` non cambia. Parte da sola una nuova build.
+Il file del workflow in `.github/workflows` va riaperto e modificato solo se cambia `build-apk.yml`. Parte da sola una nuova build.

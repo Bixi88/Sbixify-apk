@@ -8,6 +8,7 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
 import android.graphics.Bitmap;
@@ -16,15 +17,19 @@ import android.graphics.Color;
 import android.media.MediaMetadata;
 import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
+import android.net.Uri;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.PowerManager;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.os.VibratorManager;
+import android.provider.Settings;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
+
+import androidx.core.content.FileProvider;
 
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -36,6 +41,8 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 import java.io.BufferedOutputStream;
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -63,6 +70,9 @@ import java.util.regex.Pattern;
  *  - proxyInfo():     ultimo stato HTTP del proxy (per la diagnostica).
  *  - setBarColors():  colore di barra di stato e barra di navigazione.
  *  - vibrate():       vibrazione (il WebView non supporta navigator.vibrate).
+ *  - getAppInfo():    versione installata (versionCode) per il controllo aggiornamenti.
+ *  - downloadApk():   scarica l'APK nuovo dalla Release di GitHub; updateStatus() ne dice l'avanzamento.
+ *  - installApk():    apre l'installer di Android sull'APK scaricato (chiede prima il permesso).
  *  - setMediaInfo():  notifica multimediale + servizio in primo piano (la musica continua a schermo
  *                     spento) con i pulsanti precedente / play-pausa / successivo.
  */
@@ -441,6 +451,134 @@ public class NativeHttpPlugin extends Plugin {
                 }
             }
             call.resolve();
+        } catch (Exception e) {
+            call.reject(String.valueOf(e.getMessage()));
+        }
+    }
+
+    // ------------------------------------------------------------------ aggiornamenti automatici
+
+    private static final String UPDATE_URL_PREFIX = "https://github.com/bixi88/sbixify-apk/";
+    private volatile int dlProgress = 0;
+    private volatile boolean dlDone = false;
+    private volatile boolean dlRunning = false;
+    private volatile String dlError = "";
+
+    @PluginMethod
+    public void getAppInfo(PluginCall call) {
+        try {
+            PackageInfo pi = getContext().getPackageManager().getPackageInfo(getContext().getPackageName(), 0);
+            long code = Build.VERSION.SDK_INT >= 28 ? pi.getLongVersionCode() : pi.versionCode;
+            JSObject res = new JSObject();
+            res.put("versionCode", code);
+            res.put("versionName", pi.versionName == null ? "" : pi.versionName);
+            call.resolve(res);
+        } catch (Exception e) {
+            call.reject(String.valueOf(e.getMessage()));
+        }
+    }
+
+    @PluginMethod
+    public void downloadApk(PluginCall call) {
+        final String urlStr = call.getString("url");
+        // Solo dalla Release del repository dell'app: nessun altro indirizzo viene scaricato
+        if (urlStr == null || !urlStr.toLowerCase().startsWith(UPDATE_URL_PREFIX)) {
+            call.reject("indirizzo non valido");
+            return;
+        }
+        if (dlRunning) {
+            call.resolve();
+            return;
+        }
+        dlRunning = true;
+        dlDone = false;
+        dlProgress = 0;
+        dlError = "";
+        final File dest = new File(getContext().getCacheDir(), "update.apk");
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                HttpURLConnection conn = null;
+                try {
+                    conn = (HttpURLConnection) new URL(urlStr).openConnection();
+                    conn.setConnectTimeout(15000);
+                    conn.setReadTimeout(30000);
+                    conn.setInstanceFollowRedirects(true);
+                    int status = conn.getResponseCode();
+                    if (status != 200) {
+                        throw new IOException("HTTP " + status);
+                    }
+                    int total = conn.getContentLength();
+                    InputStream is = conn.getInputStream();
+                    FileOutputStream fos = new FileOutputStream(dest);
+                    byte[] buf = new byte[32768];
+                    long got = 0;
+                    int n;
+                    while ((n = is.read(buf)) != -1) {
+                        fos.write(buf, 0, n);
+                        got += n;
+                        if (total > 0) {
+                            dlProgress = (int) (got * 100L / total);
+                        }
+                    }
+                    fos.close();
+                    is.close();
+                    if (got < 100000L) {
+                        throw new IOException("file scaricato incompleto");
+                    }
+                    dlProgress = 100;
+                    dlDone = true;
+                } catch (Exception e) {
+                    dlError = String.valueOf(e.getMessage());
+                    dlDone = false;
+                } finally {
+                    dlRunning = false;
+                    if (conn != null) {
+                        conn.disconnect();
+                    }
+                }
+            }
+        }).start();
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void updateStatus(PluginCall call) {
+        JSObject res = new JSObject();
+        res.put("progress", dlProgress);
+        res.put("done", dlDone);
+        res.put("running", dlRunning);
+        res.put("error", dlError);
+        call.resolve(res);
+    }
+
+    @PluginMethod
+    public void installApk(PluginCall call) {
+        try {
+            Context ctx = getContext();
+            File f = new File(ctx.getCacheDir(), "update.apk");
+            if (!f.exists()) {
+                call.reject("aggiornamento non scaricato");
+                return;
+            }
+            JSObject res = new JSObject();
+            // Android 8+: ogni app deve avere il permesso "Installa app sconosciute"
+            if (Build.VERSION.SDK_INT >= 26 && !ctx.getPackageManager().canRequestPackageInstalls()) {
+                Intent s = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:" + ctx.getPackageName()));
+                s.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                ctx.startActivity(s);
+                res.put("needsPermission", true);
+                call.resolve(res);
+                return;
+            }
+            Uri uri = FileProvider.getUriForFile(ctx, ctx.getPackageName() + ".fileprovider", f);
+            Intent i = new Intent(Intent.ACTION_VIEW);
+            i.setDataAndType(uri, "application/vnd.android.package-archive");
+            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+            ctx.startActivity(i);
+            res.put("needsPermission", false);
+            call.resolve(res);
         } catch (Exception e) {
             call.reject(String.valueOf(e.getMessage()));
         }
