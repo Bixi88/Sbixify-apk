@@ -43,7 +43,7 @@ jobs:
           find android/app/src/main/res -name 'ic_launcher*.png' -exec cp 192x192.png {} \;
           mkdir -p ~/.android
           cp debug.keystore ~/.android/debug.keystore
-          sed -i "s/versionCode 1/versionCode ${GITHUB_RUN_NUMBER}/" android/app/build.gradle
+          sed -i "s/versionCode 1/versionCode $(date +%s)/" android/app/build.gradle
 
       - name: Sincronizza
         run: npx cap sync android
@@ -62,9 +62,7 @@ jobs:
         with:
           tag_name: latest
           name: Sbixify - ultima build
-          body: |
-            build:${{ github.run_number }}
-            APK di Sbixify. Si aggiorna a ogni modifica del repository.
+          body: APK di prova di Sbixify. Si aggiorna a ogni modifica del repository.
           files: Sbixify.apk
 
       - name: Salva anche come artifact
