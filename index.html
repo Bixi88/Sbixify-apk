@@ -3715,7 +3715,12 @@
             // consuma sempre questa e fa scattare popstate normalmente.
             window.history.pushState({ page: 'main' }, 'Main');
             
-            window.addEventListener('popstate', (e) => {
+            // Tutta la logica del tasto/gesto "indietro". Nel browser la chiama popstate; nell'app
+            // Android la chiama direttamente il tasto indietro nativo (window.__sbxBackPressed),
+            // senza passare dalla cronologia del WebView: cosi' il comportamento e' identico e
+            // non dipende da quante voci di cronologia ci sono (che si sfalsavano e facevano
+            // uscire l'app senza il popup "tocca di nuovo per uscire").
+            const processBack = (landedState, fromPopstate) => {
                 let handled = false;
                 // Modalità Auto: overlay più in alto di tutti (sopra la stessa Now
                 // Playing), va controllata per prima.
@@ -3752,8 +3757,9 @@
                     handled = true;
                 }
                 if (!handled && nowPlayingSheet.classList.contains('expanded')) {
-                    nowPlayingSheet.classList.remove('expanded');
-                    nowPlayingSheet.style.transform = '';
+                    // Sempre con l'animazione "scorre verso il basso", anche se il back arriva da
+                    // un gesto di sistema e non da un trascinamento o dal pulsante dell'app.
+                    collapseNowPlayingSheetAnimated();
                     handled = true;
                 }
                 const apiModal = document.getElementById('apiModal');
@@ -3767,7 +3773,7 @@
                 // aveva già effettuato il proprio history.back() atterrando su 'results'.
                 // In quel caso l'utente deve restare sulla lista canzoni.
                 const viewsSlider = document.getElementById('viewsSlider');
-                const landedPage = e.state && e.state.page;
+                const landedPage = landedState && landedState.page;
                 if (!handled && viewsSlider && viewsSlider.classList.contains('showing-results') && landedPage !== 'results') {
                     showHomeView();
                     handled = true;
@@ -3787,7 +3793,7 @@
                     exitOnBackArmed = true;
                     exitOnBackArmedTimeout = setTimeout(() => { exitOnBackArmed = false; }, 2500);
                     showExitToast('Tocca di nuovo per uscire');
-                    window.history.pushState({ page: 'main' }, 'Main');
+                    if (fromPopstate) window.history.pushState({ page: 'main' }, 'Main');
                     return;
                 }
 
@@ -3797,7 +3803,13 @@
                         window.history.pushState({ page: nowPage }, nowPage === 'results' ? 'Results' : 'Main');
                     }
                 }
-            });
+            };
+            window.addEventListener('popstate', (e) => processBack(e.state, true));
+            // Usato dal tasto/gesto indietro nativo dell'app Android (vedi MainActivity)
+            window.__sbxBackPressed = () => {
+                try { processBack(null, false); return 'ok'; }
+                catch (err) { console.error('back:', err); return 'err'; }
+            };
 
             // Trigger forza aggiornamento al click sul pulsante
             document.getElementById('appUpdateBtn')?.addEventListener('click', async (e) => {
@@ -4493,6 +4505,19 @@
                 if (myGen !== sheetAutoOpenGen) return;
                 openNowPlayingSheet();
             });
+        }
+
+        // Chiusura della Now Playing con l'animazione "scorre giù", senza toccare la cronologia:
+        // la usa il tasto/gesto indietro (popstate o nativo) per avere sempre la stessa animazione
+        // della chiusura col trascinamento o col pulsante.
+        function collapseNowPlayingSheetAnimated() {
+            const startPercent = getSheetCurrentPercentY();
+            nowPlayingSheet.style.transition = 'none';
+            nowPlayingSheet.style.transform = `translate3d(0, ${startPercent}%, 0)`;
+            void nowPlayingSheet.offsetHeight;
+            nowPlayingSheet.style.transition = 'transform 0.3s cubic-bezier(0.16, 1, 0.3, 1)';
+            nowPlayingSheet.classList.remove('expanded');
+            nowPlayingSheet.style.transform = '';
         }
 
         function closeNowPlayingSheet() {
