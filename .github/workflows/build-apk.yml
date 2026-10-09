@@ -58,7 +58,11 @@ jobs:
               }
           }
           EOF
-          sed -i "s/versionCode 1/versionCode $(date +%s)/" android/app/build.gradle
+          # Numero di build = ora della compilazione: cresce sempre. Lo stesso numero viene scritto
+          # nella release, cosi' l'app (Impostazioni -> Controlla aggiornamenti) puo' confrontarlo.
+          VC=$(date +%s)
+          echo "VC=$VC" >> "$GITHUB_ENV"
+          sed -i "s/versionCode 1/versionCode $VC/" android/app/build.gradle
 
       - name: Sincronizza
         run: npx cap sync android
@@ -88,7 +92,7 @@ jobs:
         with:
           tag_name: latest
           name: Sbixify - ultima build
-          body: APK di prova di Sbixify. Si aggiorna a ogni modifica del repository.
+          body: "APK di Sbixify. build: ${{ env.VC }}"
           files: Sbixify.apk
 
       - name: Salva anche come artifact
