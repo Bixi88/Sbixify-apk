@@ -65,6 +65,7 @@ import java.util.regex.Pattern;
  *  - setBarColors():  colore di barra di stato e barra di navigazione.
  *  - vibrate():       vibrazione (il WebView non supporta navigator.vibrate).
  *  - setScreenMode(): orientamento orizzontale forzato + schermo sempre acceso (schermata testi).
+ *  - takeSharedText(): testo ricevuto dal menu Condividi di Android (es. link di una playlist Spotify).
  *  - exitApp():       chiusura completa (ferma notifica e servizio).
  *  - setMediaInfo():  notifica multimediale + servizio in primo piano (la musica continua a schermo
  *                     spento) con i pulsanti precedente / play-pausa / successivo.
@@ -85,6 +86,50 @@ public class NativeHttpPlugin extends Plugin {
     @Override
     public void load() {
         instanceRef = this;
+        try {
+            // Avvio da "Condividi" con l'app chiusa: l'intent iniziale contiene il testo condiviso.
+            // Se l'app e' stata riaperta dalla lista delle app recenti, quell'intent e' vecchio: si ignora.
+            Intent first = getActivity().getIntent();
+            if (first != null && (first.getFlags() & Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) == 0) {
+                captureShare(first);
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    // ------------------------------------------------------------------ condivisione da altre app
+
+    private static volatile String sharedText = null;
+
+    private static void captureShare(Intent intent) {
+        if (intent == null) {
+            return;
+        }
+        String action = intent.getAction();
+        if (Intent.ACTION_SEND.equals(action)) {
+            String t = intent.getStringExtra(Intent.EXTRA_TEXT);
+            if (t != null && t.length() > 0) {
+                sharedText = t;
+            }
+        } else if (Intent.ACTION_VIEW.equals(action) && intent.getDataString() != null) {
+            sharedText = intent.getDataString();
+        }
+    }
+
+    /** App gia' aperta e riportata in primo piano da "Condividi" (launchMode singleTask). */
+    @Override
+    protected void handleOnNewIntent(Intent intent) {
+        super.handleOnNewIntent(intent);
+        captureShare(intent);
+    }
+
+    @PluginMethod
+    public void takeSharedText(PluginCall call) {
+        String t = sharedText;
+        sharedText = null;
+        JSObject res = new JSObject();
+        res.put("text", t == null ? "" : t);
+        call.resolve(res);
     }
 
     /**

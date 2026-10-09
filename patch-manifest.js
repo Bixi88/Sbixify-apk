@@ -1,6 +1,6 @@
 // Eseguito automaticamente da "npx cap sync" (vedi package.json, "capacitor:sync:after").
 // Aggiunge ad AndroidManifest.xml quello che serve a Sbixify: traffico verso 127.0.0.1 (proxy audio
-// locale), vibrazione, servizio di riproduzione in primo piano, installazione degli aggiornamenti e permessi collegati.
+// locale), vibrazione, servizio di riproduzione in primo piano e permessi collegati.
 const fs = require('fs');
 
 const p = 'android/app/src/main/AndroidManifest.xml';
@@ -14,7 +14,7 @@ if (!x.includes('usesCleartextTraffic')) {
   changed = true;
 }
 
-const perms = ['VIBRATE', 'WAKE_LOCK', 'FOREGROUND_SERVICE', 'FOREGROUND_SERVICE_MEDIA_PLAYBACK', 'POST_NOTIFICATIONS', 'REQUEST_INSTALL_PACKAGES'];
+const perms = ['VIBRATE', 'WAKE_LOCK', 'FOREGROUND_SERVICE', 'FOREGROUND_SERVICE_MEDIA_PLAYBACK', 'POST_NOTIFICATIONS'];
 for (const perm of perms) {
   if (!x.includes('android.permission.' + perm + '"')) {
     x = x.replace('<application', () => '<uses-permission android:name="android.permission.' + perm + '" />\n    <application');
@@ -25,6 +25,18 @@ for (const perm of perms) {
 if (!x.includes('NativeHttpPlugin$MediaService')) {
   x = x.replace('</application>', () =>
     '    <service android:name="it.sbixify.app.NativeHttpPlugin$MediaService" android:exported="false" android:foregroundServiceType="mediaPlayback" />\n    </application>');
+  changed = true;
+}
+
+// "Condividi" di Android: Sbixify compare tra le app di destinazione per il testo (es. link di una playlist Spotify)
+if (!x.includes('android.intent.action.SEND')) {
+  x = x.replace('</activity>', () =>
+    '        <intent-filter>\n' +
+    '            <action android:name="android.intent.action.SEND" />\n' +
+    '            <category android:name="android.intent.category.DEFAULT" />\n' +
+    '            <data android:mimeType="text/plain" />\n' +
+    '        </intent-filter>\n' +
+    '    </activity>');
   changed = true;
 }
 

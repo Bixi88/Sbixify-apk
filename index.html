@@ -1785,6 +1785,14 @@
         if (np.pollActions) {
             setInterval(function () {
                 try {
+                    // Link condiviso da un'altra app (menu Condividi): lo ritira solo quando la pagina e' pronta
+                    if (window.__sbxOnShared && np.takeSharedText) {
+                        Promise.resolve(np.takeSharedText()).then(function (r) {
+                            if (r && r.text) window.__sbxOnShared(r.text);
+                        }).catch(function () {});
+                    }
+                } catch (e) {}
+                try {
                     Promise.resolve(np.pollActions()).then(function (r) {
                         ((r && r.actions) || []).forEach(function (e) {
                             var name = map[e.action];
@@ -2205,6 +2213,18 @@
                     <span id="modalApiBadgeError" class="hidden text-[10px] font-bold text-red-500 bg-red-500/10 border border-red-500/20 px-2 py-0.5 rounded-full animate-pulse">Non disponibile</span>
                 </div>
                 <p class="text-[10px] custom-text-muted leading-snug">L'app cerca i brani su YouTube tramite un piccolo server dedicato (Cloudflare Workers, piano gratuito), senza bisogno di alcuna chiave API.</p>
+            </div>
+
+            <div class="mt-5 border-t border-white/5 pt-4" id="backupSection">
+                <label class="block text-xs font-bold uppercase tracking-wider custom-text-muted mb-2">Dati dell'app</label>
+                <p class="text-[10px] custom-text-muted leading-snug mb-3">Salva recenti, playlist e ultimo brano in un testo da conservare (per esempio in una nota). Se reinstalli l'app, incollalo qui per ripristinare tutto.</p>
+                <div class="flex space-x-2">
+                    <button id="backupExportBtn" type="button" class="font-bold text-xs px-4 py-2 rounded-xl active:scale-95 transition-all custom-bg-accent" style="color:#1a1305;">Esporta</button>
+                    <button id="backupImportBtn" type="button" class="font-semibold text-xs px-4 py-2 rounded-xl active:scale-95 transition-all border border-white/10 custom-text-muted">Importa</button>
+                </div>
+                <textarea id="backupText" rows="5" class="hidden w-full mt-3 text-[10px] rounded-xl p-2 bg-black/30 border border-white/10 text-[var(--text-main)]" style="font-family:monospace;" placeholder="Incolla qui il testo salvato"></textarea>
+                <button id="backupApplyBtn" type="button" class="hidden mt-2 font-bold text-xs px-4 py-2 rounded-xl active:scale-95 transition-all custom-bg-accent" style="color:#1a1305;">Ripristina</button>
+                <p id="backupMsg" class="text-[10px] mt-2 custom-text-muted leading-snug"></p>
             </div>
 
             <div class="flex items-center justify-end space-x-3 mt-6 border-t border-white/5 pt-4">
@@ -3322,6 +3342,77 @@
             saveResumePosition();
             try { Promise.resolve(np.exitApp()).catch(() => {}); } catch (e) {}
         }
+
+        // --- ESPORTA / IMPORTA I DATI (Impostazioni) ---
+        // Solo i dati "veri" dell'utente; le cache (ricerche, testi, classifiche) si rigenerano da sole.
+        const BACKUP_KEYS = ['sbixify_recent', 'sbixify_recent_playlists', 'sbixify_recent_tracks',
+                             'sbixify_repeat_enabled', 'sbixify_last_playback', 'sbixify_last_pos'];
+        window.addEventListener('load', () => {
+            const box = document.getElementById('backupText');
+            const msg = document.getElementById('backupMsg');
+            const applyBtn = document.getElementById('backupApplyBtn');
+            if (!box || !msg) return;
+            const say = (t) => { msg.textContent = t; };
+
+            document.getElementById('backupExportBtn').addEventListener('click', async () => {
+                const data = {};
+                BACKUP_KEYS.forEach((k) => { const v = localStorage.getItem(k); if (v !== null) data[k] = v; });
+                const txt = JSON.stringify({ app: 'sbixify', version: 1, date: new Date().toISOString(), data: data });
+                box.value = txt;
+                box.classList.remove('hidden');
+                applyBtn.classList.add('hidden');
+                try {
+                    await navigator.clipboard.writeText(txt);
+                    say('Copiato negli appunti: incollalo in una nota per conservarlo.');
+                } catch (e) {
+                    box.focus(); box.select();
+                    say('Tieni premuto sul testo, scegli "Copia" e salvalo in una nota.');
+                }
+            });
+
+            document.getElementById('backupImportBtn').addEventListener('click', () => {
+                box.value = '';
+                box.classList.remove('hidden');
+                applyBtn.classList.remove('hidden');
+                box.focus();
+                say('Incolla qui il testo salvato e premi "Ripristina".');
+            });
+
+            applyBtn.addEventListener('click', () => {
+                try {
+                    const obj = JSON.parse(box.value.trim());
+                    if (!obj || obj.app !== 'sbixify' || !obj.data) throw new Error('formato');
+                    let n = 0;
+                    BACKUP_KEYS.forEach((k) => {
+                        if (typeof obj.data[k] === 'string') { localStorage.setItem(k, obj.data[k]); n++; }
+                    });
+                    say('Ripristinati ' + n + ' elementi. Riavvio...');
+                    setTimeout(() => location.reload(), 900);
+                } catch (e) {
+                    say('Testo non valido: incolla esattamente quello esportato.');
+                }
+            });
+        });
+
+        // --- LINK SPOTIFY CONDIVISO DA UN'ALTRA APP (menu Condividi di Android) ---
+        // L'app compare tra le destinazioni di "Condividi"; il plugin nativo consegna il testo,
+        // qui estraiamo il link e apriamo la playlist/album/artista come se l'avessi incollato.
+        function handleSharedText(text) {
+            const t = String(text || '');
+            const m = t.match(/open\.spotify\.com\/(?:[a-z-]+\/)?(playlist|album|artist)\/([a-zA-Z0-9]{15,25})/i)
+                   || t.match(/spotify:(playlist|album|artist):([a-zA-Z0-9]{15,25})/i);
+            if (!m) { try { showToast('Questo non è un link Spotify di playlist, album o artista'); } catch (e) {} return; }
+            const url = 'https://open.spotify.com/' + m[1].toLowerCase() + '/' + m[2];
+            let delay = 0;
+            try { document.getElementById('apiModal')?.classList.remove('active'); } catch (e) {}
+            try { if (driveModeOpen) { closeDriveMode(); delay = 450; } } catch (e) {}
+            try {
+                const sheet = document.getElementById('nowPlayingSheet');
+                if (sheet && sheet.classList.contains('expanded')) { closeNowPlayingSheet(); delay = 450; }
+            } catch (e) {}
+            setTimeout(() => { try { importSpotifyPlaylist(url); } catch (e) {} }, delay);
+        }
+        window.addEventListener('load', () => { window.__sbxOnShared = handleSharedText; });
 
 
         // onPlayerReady usa variabili dichiarate più avanti nello script: lo rimandiamo a
