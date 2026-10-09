@@ -6,9 +6,12 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.ContentResolver;
+import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
 import android.graphics.Bitmap;
@@ -17,9 +20,12 @@ import android.graphics.Color;
 import android.media.MediaMetadata;
 import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
+import android.net.Uri;
 import android.os.Build;
+import android.os.Environment;
 import android.os.IBinder;
 import android.os.PowerManager;
+import android.provider.MediaStore;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.os.VibratorManager;
@@ -37,6 +43,8 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 import java.io.BufferedOutputStream;
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -840,6 +848,80 @@ public class NativeHttpPlugin extends Plugin {
                     .setMediaSession(session.getSessionToken())
                     .setShowActionsInCompactView(0, 1, 2));
             return b.build();
+        }
+    }
+
+    // ------------------------------------------------------------------ versione, aggiornamenti, file
+
+    /** Versione installata: versionCode = ora della compilazione (vedi workflow), usata dal controllo aggiornamenti. */
+    @PluginMethod
+    public void getAppInfo(PluginCall call) {
+        try {
+            PackageInfo pi = getContext().getPackageManager().getPackageInfo(getContext().getPackageName(), 0);
+            long code = Build.VERSION.SDK_INT >= 28 ? pi.getLongVersionCode() : (long) pi.versionCode;
+            JSObject res = new JSObject();
+            res.put("versionName", pi.versionName == null ? "" : pi.versionName);
+            res.put("versionCode", code);
+            call.resolve(res);
+        } catch (Exception e) {
+            call.reject(String.valueOf(e.getMessage()));
+        }
+    }
+
+    /** Apre un indirizzo https nel browser di sistema (es. per scaricare il nuovo APK). */
+    @PluginMethod
+    public void openUrl(PluginCall call) {
+        String url = call.getString("url");
+        if (url == null || !url.startsWith("https://")) {
+            call.reject("indirizzo non valido");
+            return;
+        }
+        try {
+            Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(i);
+            call.resolve();
+        } catch (Exception e) {
+            call.reject(String.valueOf(e.getMessage()));
+        }
+    }
+
+    /** Salva un file di testo (il backup) nella cartella pubblica Download. */
+    @PluginMethod
+    public void saveBackupFile(PluginCall call) {
+        String name = call.getString("filename", "Sbixify-backup.json");
+        String content = call.getString("content", "");
+        try {
+            name = name.replaceAll("[^A-Za-z0-9._-]", "_");
+            byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
+            if (Build.VERSION.SDK_INT >= 29) {
+                ContentValues v = new ContentValues();
+                v.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+                v.put(MediaStore.MediaColumns.MIME_TYPE, "application/json");
+                v.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
+                ContentResolver cr = getContext().getContentResolver();
+                Uri uri = cr.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
+                if (uri == null) {
+                    throw new IOException("impossibile creare il file");
+                }
+                OutputStream os = cr.openOutputStream(uri);
+                if (os == null) {
+                    throw new IOException("impossibile scrivere il file");
+                }
+                os.write(bytes);
+                os.close();
+            } else {
+                File dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+                dir.mkdirs();
+                FileOutputStream fo = new FileOutputStream(new File(dir, name));
+                fo.write(bytes);
+                fo.close();
+            }
+            JSObject res = new JSObject();
+            res.put("filename", name);
+            call.resolve(res);
+        } catch (Exception e) {
+            call.reject(String.valueOf(e.getMessage()));
         }
     }
 
