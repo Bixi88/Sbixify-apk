@@ -630,14 +630,16 @@ public class NativeHttpPlugin extends Plugin {
             session = new MediaSession(this, "Sbixify");
             session.setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS | MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS);
             session.setCallback(new MediaSession.Callback() {
+                // Comandi dalla MediaSession di sistema (Bluetooth, Alexa, cuffie, blocco schermo):
+                // "ext_" li distingue dai pulsanti della nostra notifica
                 @Override
                 public void onPlay() {
-                    send("play", 0);
+                    send("ext_play", 0);
                 }
 
                 @Override
                 public void onPause() {
-                    send("pause", 0);
+                    send("ext_pause", 0);
                 }
 
                 @Override

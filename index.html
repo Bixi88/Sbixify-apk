@@ -972,6 +972,7 @@
         .suggest-row .suggest-thumb { width:44px; height:44px; border-radius:50%; flex-shrink:0; background-size:cover; background-position:center; background-color:rgba(255,255,255,0.08); display:flex; align-items:center; justify-content:center; color:var(--text-muted); font-size:13px; }
         .suggest-row.is-artist .suggest-thumb { width:52px; height:52px; }
         .suggest-row.is-album .suggest-thumb { width:52px; height:52px; border-radius:8px; }
+        .suggest-row.is-playlist .suggest-thumb { width:52px; height:52px; border-radius:8px; }
         .suggest-row .suggest-meta { flex:1; min-width:0; }
         .suggest-row .suggest-title { font-size:13.5px; font-weight:700; color:var(--text-main); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
         .suggest-row .suggest-sub { font-size:11.5px; color:var(--text-muted); margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -1791,7 +1792,9 @@
         try { Object.defineProperty(navigator, 'mediaSession', { value: ms, configurable: true }); } catch (e) { return; }
 
         // Pulsanti della notifica / blocco schermo: il plugin li mette in coda, qui li ritiriamo.
-        var map = { play: 'play', pause: 'pause', next: 'nexttrack', previous: 'previoustrack', seek: 'seekto' };
+        // ext_play / ext_pause = comandi arrivati dalla MediaSession di sistema (Bluetooth, Alexa, cuffie);
+        // play / pause = pulsanti della nostra notifica.
+        var map = { play: 'play', pause: 'pause', ext_play: 'play', ext_pause: 'pause', next: 'nexttrack', previous: 'previoustrack', seek: 'seekto' };
         if (np.pollActions) {
             setInterval(function () {
                 try {
@@ -1807,7 +1810,7 @@
                         ((r && r.actions) || []).forEach(function (e) {
                             var name = map[e.action];
                             var h = name && handlers[name];
-                            if (h) { try { h({ action: name, seekTime: e.position }); } catch (err) {} }
+                            if (h) { try { h({ action: name, seekTime: e.position, external: String(e.action).indexOf('ext_') === 0 }); } catch (err) {} }
                         });
                     }).catch(function () {});
                 } catch (e) {}
@@ -3937,10 +3940,16 @@
             } else if (event.data == PS.ENDED) {
                 appState.isPlaying = false;
                 setPlayIconState(false);
-                updateMediaSessionState(false);
-                updateMediaSessionPosition();
                 syncKeepAlive(false);
-                handleTrackEnded();
+                lastTrackEndTs = Date.now();
+                const continues = handleTrackEnded();
+                // Fine brano con proseguimento automatico: NON si segnala "in pausa" a notifica,
+                // schermata di blocco e dispositivi Bluetooth (Alexa, auto, cuffie). Prima, nel secondo
+                // o due che servono a caricare il brano dopo, lo stato risultava "pausa": alcuni
+                // dispositivi rispondevano con un loro comando di pausa che arrivava a brano gia'
+                // ripartito e lo rimetteva in pausa. Si segnala pausa solo se la coda e' davvero finita.
+                if (!continues) updateMediaSessionState(false);
+                updateMediaSessionPosition();
             }
             // BUFFERING (3), UNSTARTED (-1), CUED (5): nessuna modifica all'icona.
         }
@@ -4256,6 +4265,11 @@
             window.hideSearchSuggestions = hideSearchSuggestions;
 
             async function fetchDeezerSuggestions(query) {
+                // Playlist di YouTube Music (solo app Android): in parallelo, con un tetto di attesa
+                // cosi' una risposta lenta non ritarda i suggerimenti di artisti, album e brani.
+                const playlistsPromise = nativeHttp()
+                    ? Promise.race([searchYtmPlaylists(query), new Promise((r) => setTimeout(() => r([]), 5000))]).catch(() => [])
+                    : Promise.resolve([]);
                 const [artistRes, albumRes, trackRes] = await Promise.all([
                     jsonpRequest(`https://api.deezer.com/search/artist?q=${encodeURIComponent(query)}&limit=4`, 6000).catch(() => null),
                     jsonpRequest(`https://api.deezer.com/search/album?q=${encodeURIComponent(query)}&limit=4`, 6000).catch(() => null),
@@ -4264,13 +4278,15 @@
                 return {
                     artists: (artistRes && Array.isArray(artistRes.data)) ? artistRes.data : [],
                     albums: (albumRes && Array.isArray(albumRes.data)) ? albumRes.data : [],
-                    tracks: (trackRes && Array.isArray(trackRes.data)) ? trackRes.data : []
+                    tracks: (trackRes && Array.isArray(trackRes.data)) ? trackRes.data : [],
+                    playlists: (await playlistsPromise) || []
                 };
             }
 
-            function renderSearchSuggestions(artists, tracks, albums = []) {
+            function renderSearchSuggestions(artists, tracks, albums = [], playlists = []) {
                 if (!searchSuggestionsEl) return;
-                if (!artists.length && !tracks.length && !albums.length) { hideSearchSuggestions(); return; }
+                playlists = (playlists || []).slice(0, 3);
+                if (!artists.length && !tracks.length && !albums.length && !playlists.length) { hideSearchSuggestions(); return; }
 
                 const rowsHtml = [];
                 artists.forEach((a, i) => {
@@ -4298,6 +4314,21 @@
                             <div class="suggest-meta">
                                 <div class="suggest-title">${escapeHtml(al.title || '')}</div>
                                 <div class="suggest-sub">Album${artistName ? ' · ' + escapeHtml(artistName) : ''}</div>
+                            </div>
+                            <i class="fa-solid fa-chevron-right suggest-icon"></i>
+                        </div>
+                    `);
+                });
+                // Playlist di YouTube Music: stessa grafica degli album, etichetta "Playlist" e,
+                // se c'e', l'autore. Si aprono come lista canzoni (openYtmPlaylist).
+                playlists.forEach((p, i) => {
+                    const cover = p.thumb || '';
+                    rowsHtml.push(`
+                        <div class="suggest-row is-playlist" data-kind="playlist" data-idx="${i}">
+                            <div class="suggest-thumb" style="${cover ? `background-image:url('${cover.replace(/'/g, "\\'")}')` : ''}">${cover ? '' : '<i class="fa-solid fa-list"></i>'}</div>
+                            <div class="suggest-meta">
+                                <div class="suggest-title">${escapeHtml(p.title || '')}</div>
+                                <div class="suggest-sub">Playlist${p.subtitle ? ' · ' + escapeHtml(p.subtitle) : ''}</div>
                             </div>
                             <i class="fa-solid fa-chevron-right suggest-icon"></i>
                         </div>
@@ -4344,6 +4375,17 @@
                         searchInput.blur();
                         searchInput.value = '';
                         searchAlbumPlaylist(album);
+                    });
+                });
+                searchSuggestionsEl.querySelectorAll('.suggest-row.is-playlist').forEach(row => {
+                    row.addEventListener('click', () => {
+                        const p = playlists[parseInt(row.dataset.idx, 10)];
+                        if (!p) return;
+                        hapticFeedback();
+                        hideSearchSuggestions();
+                        searchInput.blur();
+                        searchInput.value = '';
+                        openYtmPlaylist(YTM_URL_PREFIX + p.id, false, p);
                     });
                 });
                 // Tap su un brano suggerito: riproduzione IMMEDIATA del match più preciso
@@ -4476,7 +4518,7 @@
                     // Se nel frattempo l'utente ha digitato altro (o la ricerca è già stata
                     // inviata) questo risultato non è più quello giusto: si scarta.
                     if (myToken !== suggestRequestToken || searchInput.value.trim() !== query) return;
-                    renderSearchSuggestions(result.artists, result.tracks, result.albums);
+                    renderSearchSuggestions(result.artists, result.tracks, result.albums, result.playlists);
                 }, 280);
             });
 
@@ -4484,7 +4526,7 @@
                 const query = searchInput.value.trim();
                 if (query.length >= 2 && suggestCache.has(query.toLowerCase())) {
                     const cached = suggestCache.get(query.toLowerCase());
-                    renderSearchSuggestions(cached.artists, cached.tracks, cached.albums);
+                    renderSearchSuggestions(cached.artists, cached.tracks, cached.albums, cached.playlists);
                 }
             });
 
@@ -9747,8 +9789,8 @@
 
         function setupMediaSessionHandlers() {
             if ('mediaSession' in navigator) {
-                navigator.mediaSession.setActionHandler('play', togglePlay);
-                navigator.mediaSession.setActionHandler('pause', togglePlay);
+                navigator.mediaSession.setActionHandler('play', (d) => remoteMediaCommand('play', !!(d && d.external)));
+                navigator.mediaSession.setActionHandler('pause', (d) => remoteMediaCommand('pause', !!(d && d.external)));
                 navigator.mediaSession.setActionHandler('previoustrack', prevTrack);
                 navigator.mediaSession.setActionHandler('nexttrack', nextTrack);
             }
@@ -9777,6 +9819,30 @@
                 void el.offsetWidth; // forza il reflow: fa ripartire l'animazione ad ogni cambio stato reale
                 el.className = `${isPlaying ? pauseCls : playCls} icon-pop`;
             });
+        }
+
+        // --- COMANDI DA NOTIFICA / BLOCCO SCHERMO / BLUETOOTH / CUFFIE ---
+        // Prima "play" e "pausa" chiamavano entrambi togglePlay(): un comando doppio o in ritardo
+        // (tipico di Alexa e di alcune casse Bluetooth, che reagiscono a un cambio stato) invertiva
+        // lo stato appena impostato. Ora play e pausa sono "idempotenti": play non fa nulla se sta
+        // gia' suonando (o sta per farlo), pausa non fa nulla se e' gia' ferma.
+        // In piu', una pausa che arriva da un dispositivo esterno nei 4 secondi dopo la fine di un
+        // brano (quando la coda continua) e' quasi certamente la reazione del dispositivo al cambio
+        // brano, non una scelta dell'utente: viene ignorata.
+        let lastTrackEndTs = 0;
+        function remoteMediaCommand(cmd, external) {
+            const intended = !!(appState.isPlaying || (player && player.mode === 'audio' && player._wantPlay));
+            if (cmd === 'play') {
+                if (!intended) togglePlay();
+                return;
+            }
+            if (!intended) return;
+            if (external && (Date.now() - lastTrackEndTs) < 4000) {
+                try { showToast('Pausa ignorata: arrivata da un dispositivo subito dopo il cambio brano'); } catch (e) {}
+                return;
+            }
+            if (appState.isPlaying) togglePlay();
+            else if (player) player.pauseVideo();   // brano successivo ancora in caricamento
         }
 
         function togglePlay() {
@@ -9912,14 +9978,16 @@
         // preme manualmente "avanti": lo skip manuale con prevBtn/nextBtn deve continuare a
         // scorrere/avvolgere la coda a prescindere dal repeat, che riguarda solo cosa succede
         // "naturalmente" alla fine dell'ultimo brano (o dell'unico, per una ricerca singola).
+        // Restituisce true se la riproduzione prosegue da sola (brano successivo, altre pagine di
+        // risultati, repeat), false se la coda e' finita e tutto si ferma.
         function handleTrackEnded() {
-            if (nowPlayingTracks.length === 0) return;
+            if (nowPlayingTracks.length === 0) return false;
             const nextIdx = nowPlayingIndex + 1;
 
             if (nextIdx < nowPlayingTracks.length) {
                 // Non è l'ultimo brano della coda: si avanza normalmente, il repeat non c'entra.
                 loadTrack(nextIdx, nowPlayingTracks);
-                return;
+                return true;
             }
 
             // Siamo alla fine della coda (playlist o singola canzone cercata).
@@ -9927,14 +9995,16 @@
                 // Altri risultati di ricerca disponibili: si continua a paginare come prima,
                 // indipendentemente dal repeat (non è davvero "fine playlist").
                 performSearch(true).then(() => { if (appState.tracks[nextIdx]) loadTrack(nextIdx, appState.tracks); });
-                return;
+                return true;
             }
 
             if (repeatEnabled) {
                 // Riparte dalla prima canzone della coda: se la coda ha un solo brano
                 // (ricerca singola), questo equivale a far ripartire lo stesso brano.
                 loadTrack(0, nowPlayingTracks);
+                return true;
             }
+            return false;
             // Repeat spento: non si fa nulla, la riproduzione resta ferma sull'ultimo brano
             // (icona già impostata su "play" da onPlayerStateChange).
         }
