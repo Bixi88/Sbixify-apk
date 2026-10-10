@@ -784,6 +784,24 @@
         }
 
         /* --- MENU IMPOSTAZIONI: overlay + sheet animati in stile Gemini --- */
+        /* Popup "Nuova versione disponibile" all'apertura dell'app (app Android) */
+        #updatePopup {
+            position: fixed; inset: 0; z-index: 90;
+            display: flex; align-items: center; justify-content: center; padding: 24px;
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+            opacity: 0; visibility: hidden; pointer-events: none;
+            transition: opacity 0.25s ease, visibility 0s linear 0.25s;
+        }
+        #updatePopup.active { opacity: 1; visibility: visible; pointer-events: auto; transition: opacity 0.25s ease, visibility 0s linear 0s; }
+        #updatePopup .update-card {
+            width: 100%; max-width: 340px; border-radius: 24px; padding: 22px 22px 18px;
+            background: var(--bg-main); color: var(--text-main);
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+            transform: scale(0.94); transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        #updatePopup.active .update-card { transform: scale(1); }
+
         #apiModal {
             position: fixed;
             inset: 0;
@@ -2214,6 +2232,19 @@
     </div>
 
     <!-- Modal Impostazioni -->
+    <div id="updatePopup" role="dialog" aria-modal="true">
+        <div class="update-card">
+            <h3 class="text-base font-bold mb-2 flex items-center">
+                <i class="fa-solid fa-download mr-2.5 custom-text-accent"></i> Nuova versione disponibile
+            </h3>
+            <p id="updatePopupText" class="text-xs custom-text-muted leading-snug mb-4">Scaricala e installala sopra a quella attuale: non perdi i tuoi dati.</p>
+            <div class="flex items-center justify-end space-x-3">
+                <button id="updatePopupLater" type="button" class="font-semibold text-xs px-4 py-2.5 rounded-xl active:scale-95 transition-all border border-white/10 custom-text-muted">Più tardi</button>
+                <button id="updatePopupDownload" type="button" class="font-bold text-xs px-5 py-2.5 rounded-xl active:scale-95 transition-all custom-bg-accent" style="color:#1a1305;">Scarica</button>
+            </div>
+        </div>
+    </div>
+
     <div id="apiModal">
         <div class="settings-sheet glass-panel shadow-2xl relative">
             <h3 class="text-base font-bold mb-5 flex items-center text-[var(--text-main)]">
@@ -3717,29 +3748,65 @@
                 }
             });
 
-            dl.addEventListener('click', () => {
-                const np = nativeHttp();
-                if (lastUpdateInfo && lastUpdateInfo.url && np && np.openUrl) {
-                    Promise.resolve(np.openUrl({ url: lastUpdateInfo.url })).catch(() => {});
-                }
-            });
+            dl.addEventListener('click', () => { if (lastUpdateInfo && lastUpdateInfo.url) startUpdateDownload(lastUpdateInfo.url); });
 
-            // Controllo automatico in silenzio (app Android), al massimo ogni 6 ore
+            // Popup all'apertura (app Android): se c'e' una versione nuova lo mostra, e il download
+            // parte SOLO quando premi "Scarica". Nessun download automatico.
+            const popup = document.getElementById('updatePopup');
+            document.getElementById('updatePopupLater').addEventListener('click', () => closeUpdatePopup());
+            document.getElementById('updatePopupDownload').addEventListener('click', () => {
+                const url = popup && popup.dataset.url;
+                closeUpdatePopup();
+                if (url) startUpdateDownload(url);
+            });
+            popup.addEventListener('click', (e) => { if (e.target === popup) closeUpdatePopup(); });
+
+            // Controllo all'apertura dell'app (Android): se c'e' una versione nuova esce il popup
             if (nativeHttp()) {
                 setTimeout(async () => {
                     try {
-                        const last = Number(localStorage.getItem('sbixify_update_check_ts') || 0);
-                        if (Date.now() - last < 6 * 3600 * 1000) return;
-                        localStorage.setItem('sbixify_update_check_ts', String(Date.now()));
                         const res = await checkForUpdate();
-                        if (res.status === 'available') {
+                        if (res.status === 'available' && res.url) {
                             lastUpdateInfo = res;
-                            try { showToast('Nuova versione disponibile: Impostazioni → Controlla aggiornamenti'); } catch (e) {}
+                            showUpdatePopup(res);
                         }
                     } catch (e) {}
-                }, 8000);
+                }, 3000);
             }
         });
+
+        function showUpdatePopup(res) {
+            const popup = document.getElementById('updatePopup');
+            if (!popup) return;
+            popup.dataset.url = res.url || '';
+            const t = document.getElementById('updatePopupText');
+            if (t) t.textContent = (res.label ? 'Build del ' + res.label + '. ' : '') + 'Scaricala e installala sopra a quella attuale: non perdi i tuoi dati.';
+            popup.classList.add('active');
+        }
+        function closeUpdatePopup() {
+            const popup = document.getElementById('updatePopup');
+            if (popup) popup.classList.remove('active');
+        }
+        function isUpdatePopupOpen() {
+            const popup = document.getElementById('updatePopup');
+            return !!(popup && popup.classList.contains('active'));
+        }
+
+        // Il download lo fa il gestore di sistema di Android (notifica con avanzamento, non si blocca
+        // come in Chrome): a fine download tocca la notifica per installare. Solo su richiesta.
+        async function startUpdateDownload(url) {
+            const np = nativeHttp();
+            try {
+                if (np && np.downloadUpdate) {
+                    await np.downloadUpdate({ url: url });
+                    try { showToast('Download avviato: segui la notifica e toccala per installare'); } catch (e) {}
+                } else if (np && np.openUrl) {
+                    await np.openUrl({ url: url });
+                }
+            } catch (e) {
+                try { if (np && np.openUrl) await np.openUrl({ url: url }); } catch (e2) {}
+            }
+        }
 
         // --- LINK SPOTIFY CONDIVISO DA UN'ALTRA APP (menu Condividi di Android) ---
         // L'app compare tra le destinazioni di "Condividi"; il plugin nativo consegna il testo,
@@ -4075,6 +4142,11 @@
             // uscire l'app senza il popup "tocca di nuovo per uscire").
             const processBack = (landedState, fromPopstate) => {
                 let handled = false;
+                // Popup "Nuova versione disponibile": e' sopra a tutto, indietro lo chiude
+                if (typeof isUpdatePopupOpen === 'function' && isUpdatePopupOpen()) {
+                    closeUpdatePopup();
+                    handled = true;
+                }
                 // Modalità Auto: overlay più in alto di tutti (sopra la stessa Now
                 // Playing), va controllata per prima.
                 if (driveModeOpen) {

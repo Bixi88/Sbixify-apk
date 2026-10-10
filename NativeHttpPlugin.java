@@ -1,6 +1,7 @@
 package it.sbixify.app;
 
 import android.Manifest;
+import android.app.DownloadManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -74,6 +75,7 @@ import java.util.regex.Pattern;
  *  - proxyInfo():     ultimo stato HTTP del proxy (per la diagnostica).
  *  - setBarColors():  colore di barra di stato e barra di navigazione.
  *  - vibrate():       vibrazione (il WebView non supporta navigator.vibrate).
+ *  - downloadUpdate(): scarica l'APK nuovo con il gestore download di sistema (solo su richiesta).
  *  - getCutoutInsets(): ingombro del foro fotocamera a sinistra/destra (per la schermata testi).
  *  - setScreenMode(): orientamento orizzontale forzato + schermo sempre acceso (schermata testi).
  *  - takeSharedText(): testo ricevuto dal menu Condividi di Android (es. link di una playlist Spotify).
@@ -886,6 +888,35 @@ public class NativeHttpPlugin extends Plugin {
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             getContext().startActivity(i);
             call.resolve();
+        } catch (Exception e) {
+            call.reject(String.valueOf(e.getMessage()));
+        }
+    }
+
+    /**
+     * Scarica il nuovo APK con il gestore download di Android (notifica con avanzamento, riprende da
+     * solo se cade la rete). Parte solo quando l'utente preme "Scarica". A fine download si tocca la
+     * notifica per installare. Il file finisce in Download.
+     */
+    @PluginMethod
+    public void downloadUpdate(PluginCall call) {
+        String url = call.getString("url");
+        if (url == null || !url.startsWith("https://")) {
+            call.reject("indirizzo non valido");
+            return;
+        }
+        try {
+            DownloadManager dm = (DownloadManager) getContext().getSystemService(Context.DOWNLOAD_SERVICE);
+            DownloadManager.Request req = new DownloadManager.Request(Uri.parse(url));
+            req.setTitle("Sbixify - aggiornamento");
+            req.setDescription("Tocca la notifica a fine download per installare");
+            req.setMimeType("application/vnd.android.package-archive");
+            req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+            req.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "Sbixify-aggiornamento.apk");
+            long id = dm.enqueue(req);
+            JSObject res = new JSObject();
+            res.put("id", id);
+            call.resolve(res);
         } catch (Exception e) {
             call.reject(String.valueOf(e.getMessage()));
         }
