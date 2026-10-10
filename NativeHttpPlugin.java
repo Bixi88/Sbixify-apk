@@ -29,7 +29,9 @@ import android.provider.MediaStore;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.os.VibratorManager;
+import android.view.DisplayCutout;
 import android.view.View;
+import android.view.WindowInsets;
 import android.view.Window;
 import android.view.WindowManager;
 
@@ -72,6 +74,7 @@ import java.util.regex.Pattern;
  *  - proxyInfo():     ultimo stato HTTP del proxy (per la diagnostica).
  *  - setBarColors():  colore di barra di stato e barra di navigazione.
  *  - vibrate():       vibrazione (il WebView non supporta navigator.vibrate).
+ *  - getCutoutInsets(): ingombro del foro fotocamera a sinistra/destra (per la schermata testi).
  *  - setScreenMode(): orientamento orizzontale forzato + schermo sempre acceso (schermata testi).
  *  - takeSharedText(): testo ricevuto dal menu Condividi di Android (es. link di una playlist Spotify).
  *  - exitApp():       chiusura completa (ferma notifica e servizio).
@@ -969,6 +972,40 @@ public class NativeHttpPlugin extends Plugin {
                         w.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
                     }
                     call.resolve();
+                } catch (Exception e) {
+                    call.reject(String.valueOf(e.getMessage()));
+                }
+            }
+        });
+    }
+
+    /**
+     * Di quanti dp il foro della fotocamera (o il notch) invade lo schermo da sinistra e da destra,
+     * nell'orientamento attuale. Serve alla schermata testi per non scrivere sotto la fotocamera.
+     */
+    @PluginMethod
+    public void getCutoutInsets(final PluginCall call) {
+        getActivity().runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    float density = getContext().getResources().getDisplayMetrics().density;
+                    int left = 0;
+                    int right = 0;
+                    if (Build.VERSION.SDK_INT >= 28) {
+                        WindowInsets wi = getActivity().getWindow().getDecorView().getRootWindowInsets();
+                        if (wi != null) {
+                            DisplayCutout dc = wi.getDisplayCutout();
+                            if (dc != null) {
+                                left = dc.getSafeInsetLeft();
+                                right = dc.getSafeInsetRight();
+                            }
+                        }
+                    }
+                    JSObject res = new JSObject();
+                    res.put("left", Math.round(left / density));
+                    res.put("right", Math.round(right / density));
+                    call.resolve(res);
                 } catch (Exception e) {
                     call.reject(String.valueOf(e.getMessage()));
                 }

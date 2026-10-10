@@ -1081,7 +1081,12 @@
         #chartsSection:not(.hidden), #artistsItSection:not(.hidden), #artistsGlobalSection:not(.hidden) { display:block; }
         .qcard.latest .circle { box-shadow:0 10px 22px -8px rgba(0,0,0,.5); }
         .qcard.latest .name { color:var(--accent); }
-        .qcard .name { font-size:12.5px; font-weight:600; text-align:center; line-height:1.2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--text-main); }
+        /* Larghezza FISSA = quella del cerchio sopra (width:100% della card, che e' una colonna della
+           griglia a 3 uguali): prima il nome era largo quanto il suo testo (la card e' un flex in
+           colonna con align-items:center), quindi non era mai "troppo lungo per la sua scatola":
+           il marquee non scattava e un nome lungo sconfinava sui vicini sovrapponendosi. Ora ogni
+           nome ha il suo spazio preciso; se non ci sta, scorre dentro quello spazio (marquee). */
+        .qcard .name { width:100%; max-width:100%; box-sizing:border-box; padding:0 2px; font-size:12.5px; font-weight:600; text-align:center; line-height:1.2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--text-main); }
         .qcard .qcard-delete {
             position: absolute; bottom: 2px; right: 2px; width: 24px; height: 24px; border-radius: 50%;
             display: flex; align-items: center; justify-content: center; font-size: 11px;
@@ -1687,6 +1692,11 @@
                 width: 100vw;
                 height: 100vh;
                 transform: translate(-50%, -50%);
+                /* Margini laterali = ingombro del foro fotocamera/notch da quel lato + un po' di aria
+                   (valori scritti da applyDriveModeInsets); senza dati restano 20px. Il testo e' centrato,
+                   quindi restringendo solo il lato del foro la "C" iniziale non finisce piu' sotto la fotocamera. */
+                padding-left: var(--dm-pad-left, 20px);
+                padding-right: var(--dm-pad-right, 20px);
             }
         }
         /* Testo molto più grande di quello del pannello normale (qui si legge al volo,
@@ -3002,6 +3012,182 @@
             }
         };
 
+
+        // ---- Playlist di YouTube Music (solo app Android: richieste dal telefono) ----
+        Object.assign(NR, {
+            BROWSE_URL: 'https://music.youtube.com/youtubei/v1/browse?prettyPrint=false',
+            FILTER_FEATURED: 'EgeKAQQoADgBagwQDhAKEAMQBRAJEAQ%3D',   // "Playlist in primo piano"
+            FILTER_COMMUNITY: 'EgeKAQQoAEABagoQAxAEEAoQCRAF',        // "Playlist della community"
+
+            webHeaders(vd) {
+                return {
+                    'Content-Type': 'application/json', 'User-Agent': this.UA_WEB,
+                    'X-Origin': this.ORIGIN, 'Referer': this.ORIGIN + '/', 'X-Goog-Visitor-Id': vd
+                };
+            },
+            webContext(vd) {
+                return { client: { clientName: 'WEB_REMIX', clientVersion: '1.20260213.01.00', hl: 'it', gl: 'IT', visitorData: vd }, user: {} };
+            },
+            runsText(node) {
+                const runs = node && node.runs;
+                return runs ? runs.map((r) => r.text).join('') : '';
+            },
+            bestThumb(thumbs) {
+                if (!Array.isArray(thumbs) || !thumbs.length) return null;
+                const url = thumbs[thumbs.length - 1].url || null;
+                return url ? url.replace(/=w\d+-h\d+/, '=w300-h300') : null;
+            },
+            thumbsOf(r) {
+                const t = (r.thumbnail && r.thumbnail.musicThumbnailRenderer && r.thumbnail.musicThumbnailRenderer.thumbnail) ||
+                          (r.thumbnailRenderer && r.thumbnailRenderer.musicThumbnailRenderer && r.thumbnailRenderer.musicThumbnailRenderer.thumbnail) ||
+                          (r.thumbnail && r.thumbnail.croppedSquareThumbnailRenderer && r.thumbnail.croppedSquareThumbnailRenderer.thumbnail);
+                return t && t.thumbnails;
+            },
+            // primo browseId che inizia con "VL" (= playlist) dentro un elemento di ricerca
+            findPlaylistBrowseId(node) {
+                const found = [];
+                const walk = (n) => {
+                    if (found.length) return;
+                    if (Array.isArray(n)) { n.forEach(walk); return; }
+                    if (n && typeof n === 'object') {
+                        for (const k of Object.keys(n)) {
+                            if (k === 'browseId' && typeof n[k] === 'string' && n[k].startsWith('VL')) { found.push(n[k]); return; }
+                            walk(n[k]);
+                        }
+                    }
+                };
+                walk(node);
+                return found[0] || null;
+            },
+
+            parsePlaylistCards(json) {
+                const rows = [];
+                this.collect(json, 'musicResponsiveListItemRenderer', rows);
+                this.collect(json, 'musicTwoRowItemRenderer', rows);
+                const out = [];
+                for (const r of rows) {
+                    const bid = this.findPlaylistBrowseId(r);
+                    if (!bid) continue;
+                    const col0 = r.flexColumns && r.flexColumns[0] && r.flexColumns[0].musicResponsiveListItemFlexColumnRenderer;
+                    const col1 = r.flexColumns && r.flexColumns[1] && r.flexColumns[1].musicResponsiveListItemFlexColumnRenderer;
+                    const title = (col0 && this.runsText(col0.text)) || this.runsText(r.title);
+                    const subRuns = (col1 && col1.text && col1.text.runs) || (r.subtitle && r.subtitle.runs) || [];
+                    const parts = subRuns.map((x) => x.text).filter((t) => t && t.trim() && t.trim() !== '•');
+                    if (parts.length && /playlist/i.test(parts[0])) parts.shift();
+                    if (!title) continue;
+                    out.push({ id: bid.slice(2), title: title, subtitle: parts.slice(0, 2).join(' • '), thumb: this.bestThumb(this.thumbsOf(r)) });
+                }
+                return out;
+            },
+
+            async searchPlaylists(query) {
+                const vd = await this.visitorData();
+                const one = async (filter) => {
+                    const r = await this.http(this.SEARCH_URL, 'POST', this.webHeaders(vd),
+                                              { context: this.webContext(vd), query: query, params: filter });
+                    return this.parsePlaylistCards(JSON.parse(r.data));
+                };
+                const [feat, comm] = await Promise.all([one(this.FILTER_FEATURED).catch(() => []), one(this.FILTER_COMMUNITY).catch(() => [])]);
+                const seen = new Set();
+                const merged = [];
+                // Prima alternando in primo piano e community, cosi' il primo risultato non e' sempre dello stesso tipo
+                for (let i = 0; i < Math.max(feat.length, comm.length); i++) {
+                    for (const list of [feat, comm]) {
+                        const p = list[i];
+                        if (p && !seen.has(p.id)) { seen.add(p.id); merged.push(p); }
+                    }
+                }
+                return merged.slice(0, 12);
+            },
+
+            parsePlaylistTracks(scopes) {
+                const rows = [];
+                scopes.forEach((sc) => this.collect(sc, 'musicResponsiveListItemRenderer', rows));
+                const out = [];
+                for (const r of rows) {
+                    const id = r.playlistItemData && r.playlistItemData.videoId;
+                    if (!id) continue;
+                    if (r.musicItemRendererDisplayPolicy === 'MUSIC_ITEM_RENDERER_DISPLAY_POLICY_GREY_OUT') continue; // brano non piu' disponibile
+                    const cols = r.flexColumns || [];
+                    const c0 = cols[0] && cols[0].musicResponsiveListItemFlexColumnRenderer;
+                    const c1 = cols[1] && cols[1].musicResponsiveListItemFlexColumnRenderer;
+                    const title = c0 ? this.runsText(c0.text) : '';
+                    if (!title) continue;
+                    const runs = (c1 && c1.text && c1.text.runs) || [];
+                    const artists = runs.filter((x) => x.navigationEndpoint && x.navigationEndpoint.browseEndpoint &&
+                                                       /^UC/.test(x.navigationEndpoint.browseEndpoint.browseId || '')).map((x) => x.text);
+                    const channel = artists.length ? artists.join(', ') : ((runs[0] && runs[0].text) || '');
+                    out.push({
+                        id: id, title: title, channel: channel,
+                        thumbnail: this.bestThumb(this.thumbsOf(r)) || ('https://img.youtube.com/vi/' + id + '/mqdefault.jpg'),
+                        resolved: true
+                    });
+                }
+                return out;
+            },
+
+            // Dove stanno i brani e il token per la pagina successiva (evita i brani "suggeriti" sotto la playlist)
+            playlistScopes(json) {
+                const holders = [];
+                this.collect(json, 'musicPlaylistShelfRenderer', holders);
+                this.collect(json, 'musicPlaylistShelfContinuation', holders);
+                this.collect(json, 'appendContinuationItemsAction', holders);
+                return holders.length ? holders : [json];
+            },
+            findContinuationToken(scopes) {
+                let token = null;
+                const walk = (n) => {
+                    if (token) return;
+                    if (Array.isArray(n)) { n.forEach(walk); return; }
+                    if (n && typeof n === 'object') {
+                        if (n.nextContinuationData && n.nextContinuationData.continuation) { token = n.nextContinuationData.continuation; return; }
+                        if (n.continuationCommand && n.continuationCommand.token) { token = n.continuationCommand.token; return; }
+                        Object.keys(n).forEach((k) => walk(n[k]));
+                    }
+                };
+                scopes.forEach(walk);
+                return token;
+            },
+
+            async getPlaylist(id, maxTracks) {
+                maxTracks = maxTracks || 400;
+                const vd = await this.visitorData();
+                const ctx = this.webContext(vd);
+                const headers = this.webHeaders(vd);
+                let r = await this.http(this.BROWSE_URL, 'POST', headers, { context: ctx, browseId: 'VL' + id });
+                let json = JSON.parse(r.data);
+
+                let title = '';
+                let thumb = null;
+                const heads = [];
+                ['musicResponsiveHeaderRenderer', 'musicDetailHeaderRenderer', 'musicEditablePlaylistDetailHeaderRenderer']
+                    .forEach((k) => this.collect(json, k, heads));
+                for (const h of heads) {
+                    const body = h.header ? (h.header.musicDetailHeaderRenderer || h) : h;
+                    const t = this.runsText(body.title);
+                    if (t) { title = t; thumb = this.bestThumb(this.thumbsOf(body)); break; }
+                }
+
+                const tracks = [];
+                const seen = new Set();
+                const add = (list) => list.forEach((t) => { if (!seen.has(t.id)) { seen.add(t.id); tracks.push(t); } });
+
+                let scopes = this.playlistScopes(json);
+                add(this.parsePlaylistTracks(scopes));
+                let token = this.findContinuationToken(scopes);
+                let pages = 0;
+                while (token && tracks.length < maxTracks && pages < 6) {
+                    r = await this.http(this.BROWSE_URL, 'POST', headers, { context: ctx, continuation: token });
+                    json = JSON.parse(r.data);
+                    scopes = this.playlistScopes(json);
+                    add(this.parsePlaylistTracks(scopes));
+                    token = this.findContinuationToken(scopes);
+                    pages++;
+                }
+                return { title: title, thumb: thumb, tracks: tracks };
+            }
+        });
+
         class HybridPlayer {
             constructor() {
                 const a = this.a = new Audio();
@@ -3309,6 +3495,23 @@
         // Schermata testi a schermo intero (Modalita' Auto) nell'app Android: orientamento
         // orizzontale vero e bloccato, schermo sempre acceso, barre di sistema nere.
         // In uscita si torna a come era (barre del colore della skin, rotazione libera).
+        // Margini della schermata testi (Modalità Auto) in orizzontale: si stringe il testo solo dal
+        // lato dove il foro della fotocamera invade lo schermo (misurato da Android). Se la misura non
+        // e' disponibile (app senza plugin o telefono vecchio) si usa un margine generoso su entrambi i lati.
+        async function applyDriveModeInsets() {
+            const el = document.getElementById('driveMode');
+            if (!el) return;
+            let left = 0, right = 0, known = false;
+            const np = nativeHttp();
+            if (np && np.getCutoutInsets) {
+                try { const i = await np.getCutoutInsets(); left = Number(i.left) || 0; right = Number(i.right) || 0; known = true; } catch (e) {}
+            }
+            const pad = (v) => known ? Math.max(v + 16, 20) : (np ? 56 : 20);
+            el.style.setProperty('--dm-pad-left', pad(left) + 'px');
+            el.style.setProperty('--dm-pad-right', pad(right) + 'px');
+        }
+        window.addEventListener('resize', () => { try { if (driveModeOpen) setTimeout(applyDriveModeInsets, 300); } catch (e) {} });
+
         function nativeLyricsScreen(on) {
             const np = nativeHttp();
             if (!np) return;
@@ -4971,8 +5174,12 @@
             driveModeOpen = true;
             document.getElementById('driveModeRotate').appendChild(scroll);
             document.getElementById('driveMode').classList.add('active');
-            if (nativeHttp()) nativeLyricsScreen(true);   // app Android: orizzontale vero, sempre acceso, barre nere
-            else requestDriveModeFullscreen();
+            if (nativeHttp()) {
+                nativeLyricsScreen(true);   // app Android: orizzontale vero, sempre acceso, barre nere
+                applyDriveModeInsets();
+                setTimeout(applyDriveModeInsets, 600);    // dopo che la rotazione dello schermo si e' assestata
+                setTimeout(applyDriveModeInsets, 1500);
+            } else requestDriveModeFullscreen();
             hapticFeedback();
             window.history.pushState({ page: 'driveMode' }, 'DriveMode');
         }
@@ -7344,6 +7551,7 @@
 
             let artistPromise = null;
             let maybeShowArtistCard = () => {};
+            let maybeShowPlaylistRow = () => {};
 
             if (!isLoadMore) {
                 currentListSource = 'youtube';
@@ -7365,6 +7573,15 @@
                 // rispondono, la card non rischia mai di essere cancellata dal successivo
                 // trackListDiv.innerHTML = '' fatto da renderTracklist.
                 const mySearchGeneration = ++searchGeneration;
+                // Playlist di YouTube Music che corrispondono al testo (solo app Android)
+                if (nativeHttp()) {
+                    const playlistPromise = searchYtmPlaylists(query);
+                    maybeShowPlaylistRow = () => {
+                        playlistPromise.then(list => {
+                            if (list && list.length && searchGeneration === mySearchGeneration) prependPlaylistRow(list);
+                        });
+                    };
+                }
                 artistPromise = findExactDeezerArtist(query);
                 maybeShowArtistCard = () => {
                     artistPromise.then(artist => {
@@ -7380,6 +7597,7 @@
                     nextSearchPageToken = cachedSearch.nextPageToken || '';
                     appState.tracks = cachedSearch.items;
                     renderTracklist(0);
+                    maybeShowPlaylistRow();
                     maybeShowArtistCard();
                     currentLoadedKey = 'query:' + query;
                     currentLoadedTitle = query;
@@ -7420,6 +7638,7 @@
                 appState.tracks = appState.tracks.concat(newTracks);
                 renderTracklist(isLoadMore ? previousCount : 0);
                 if (!isLoadMore) {
+                    maybeShowPlaylistRow();
                     maybeShowArtistCard();
                     currentLoadedKey = 'query:' + query;
                     currentLoadedTitle = query;
@@ -8051,8 +8270,122 @@
         // stessa fetch Deezer. Ogni punto del codice che riapriva una voce dei Recenti
         // chiamando importSpotifyPlaylist(url) passa da qui, così non serve controllare il
         // prefisso in più posti diversi.
+
+        // --- PLAYLIST DI YOUTUBE MUSIC TRA I RISULTATI DI RICERCA (solo app Android) ---
+        // Sotto/sopra le canzoni compare una riga "Playlist" con le playlist di YouTube Music che
+        // corrispondono al testo (in primo piano + community). Un tocco la apre come lista canzoni,
+        // la salva nei Recenti (url "ytm:playlist:<id>") e i brani, che hanno gia' l'id YouTube,
+        // partono senza passare dalla risoluzione Spotify -> YouTube.
+        const YTM_URL_PREFIX = 'ytm:playlist:';
+        const ytmPlaylistSearchCache = new Map();
+
+        function searchYtmPlaylists(query) {
+            const key = query.toLowerCase();
+            if (ytmPlaylistSearchCache.has(key)) return ytmPlaylistSearchCache.get(key);
+            const p = NR.searchPlaylists(query).catch((err) => { console.warn('Ricerca playlist YT Music fallita:', err); return []; });
+            ytmPlaylistSearchCache.set(key, p);
+            if (ytmPlaylistSearchCache.size > 30) ytmPlaylistSearchCache.delete(ytmPlaylistSearchCache.keys().next().value);
+            return p;
+        }
+
+        function prependPlaylistRow(list) {
+            const trackListDiv = document.getElementById('trackList');
+            if (!trackListDiv || !list || !list.length) return;
+            const old = document.getElementById('ytmPlaylistRow');
+            if (old) old.remove();
+
+            const wrap = document.createElement('div');
+            wrap.id = 'ytmPlaylistRow';
+            wrap.className = 'track-row-enter py-2';
+            wrap.innerHTML = `
+                <p class="text-[10px] font-bold uppercase tracking-wider custom-text-muted mb-2">Playlist</p>
+                <div class="flex gap-3 overflow-x-auto pb-1" style="scrollbar-width:none; -webkit-overflow-scrolling:touch;"></div>`;
+            const strip = wrap.lastElementChild;
+            list.forEach((p) => {
+                const card = document.createElement('div');
+                card.className = 'shrink-0 cursor-pointer';
+                card.style.width = '104px';
+                card.innerHTML = `
+                    <div class="rounded-xl overflow-hidden bg-neutral-800 flex items-center justify-center" style="width:104px;height:104px;">
+                        ${p.thumb ? `<img src="${p.thumb}" class="w-full h-full object-cover" alt="" loading="lazy">` : '<i class="fa-solid fa-list-music text-neutral-500"></i>'}
+                    </div>
+                    <p class="text-[11px] font-semibold mt-1.5 text-white" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${escapeHtml(p.title)}</p>
+                    <p class="text-[10px] truncate custom-text-muted">${escapeHtml(p.subtitle || '')}</p>`;
+                card.addEventListener('click', () => {
+                    hapticFeedback();
+                    openYtmPlaylist(YTM_URL_PREFIX + p.id, false, p);
+                });
+                strip.appendChild(card);
+            });
+            const first = trackListDiv.firstChild;
+            if (first && first.classList && first.classList.contains('track-row-artist')) first.after(wrap);
+            else trackListDiv.insertBefore(wrap, first);
+        }
+
+        async function openYtmPlaylist(url, forceRefresh = false, hint = null) {
+            const id = url.slice(YTM_URL_PREFIX.length);
+            const resultsStatusText = document.getElementById('resultsStatusText');
+
+            const cached = forceRefresh ? null : getCachedPlaylistTracks(url);
+            if (cached) {
+                currentListSource = 'spotify';
+                nextSearchPageToken = '';
+                appState.tracks = cached.tracks.map(t => ({ ...t }));
+                appState.currentIndex = -1;
+                currentLoadedKey = 'playlist:' + url;
+                currentLoadedTitle = cached.name;
+                toggleDownloadButtons(false);
+                showResultsView(cached.name);
+                renderTracklist(0);
+                updateRefreshPlaylistBtn(url);
+                addRecentItem({ name: cached.name, type: 'playlist', url, artwork: cached.artwork });
+                addRecentPlaylist({ name: cached.name, url, artwork: cached.artwork });
+                return;
+            }
+
+            currentListSource = 'spotify';
+            nextSearchPageToken = '';
+            showResultsView('Ricerca in corso');
+            appState.tracks = []; appState.currentIndex = -1;
+            toggleDownloadButtons(false);
+            document.getElementById('trackList').innerHTML = '';
+            if (resultsStatusText) resultsStatusText.classList.add('hidden');
+
+            try {
+                if (!nativeHttp()) throw new Error('Le playlist di YouTube Music si aprono solo nell\'app Android.');
+                const pl = await NR.getPlaylist(id);
+                if (!pl.tracks.length) throw new Error('Playlist vuota o non disponibile.');
+                const name = pl.title || (hint && hint.title) || 'Playlist';
+                const artwork = pl.thumb || (hint && hint.thumb) || pl.tracks[0].thumbnail || null;
+
+                currentListSource = 'spotify';
+                appState.tracks = pl.tracks;
+                appState.currentIndex = -1;
+                currentLoadedKey = 'playlist:' + url;
+                currentLoadedTitle = name;
+                setCachedPlaylistTracks(url, { name, artwork, tracks: pl.tracks });
+                toggleDownloadButtons(false);
+                showResultsView(name);
+                renderTracklist(0);
+                updateRefreshPlaylistBtn(url);
+                addRecentItem({ name, type: 'playlist', url, artwork });
+                addRecentPlaylist({ name, url, artwork });
+            } catch (err) {
+                console.warn('Apertura playlist YouTube Music fallita:', err);
+                showResultsView('Risultati');
+                appState.tracks = []; appState.currentIndex = -1;
+                document.getElementById('trackList').innerHTML = '';
+                if (resultsStatusText) {
+                    resultsStatusText.classList.remove('hidden');
+                    resultsStatusText.innerText = 'Non riesco ad aprire questa playlist: ' + ((err && err.message) || err);
+                }
+            }
+        }
+
         function openPlaylistByUrl(url, forceRefresh = false) {
-            if (url && url.startsWith(ARTIST_SEARCH_URL_PREFIX)) {
+            if (url && url.startsWith(YTM_URL_PREFIX)) {
+                openYtmPlaylist(url, forceRefresh);
+            } else if (url && url.startsWith(ARTIST_SEARCH_URL_PREFIX)) {
                 reopenArtistSearchPlaylist(url, forceRefresh);
             } else if (url && url.startsWith(ALBUM_SEARCH_URL_PREFIX)) {
                 reopenAlbumSearchPlaylist(url, forceRefresh);
