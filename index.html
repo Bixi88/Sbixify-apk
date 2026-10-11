@@ -991,6 +991,10 @@
         .suggest-row.is-artist .suggest-thumb { width:52px; height:52px; }
         .suggest-row.is-album .suggest-thumb { width:52px; height:52px; border-radius:8px; }
         .suggest-row.is-playlist .suggest-thumb { width:52px; height:52px; border-radius:8px; }
+        /* Etichetta "NEW" accanto ai brani aggiunti a una playlist dopo l'ultimo controllo: molto piccola,
+           resta finche' il brano non viene riprodotto almeno una volta. */
+        .new-badge { display:inline-block; font-size:8px; line-height:1; font-weight:800; letter-spacing:0.6px; padding:2px 4px 1.5px;
+                     margin-right:5px; border-radius:4px; vertical-align:1px; background:var(--accent); color:#111; }
         .suggest-row .suggest-meta { flex:1; min-width:0; }
         .suggest-row .suggest-title { font-size:13.5px; font-weight:700; color:var(--text-main); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
         .suggest-row .suggest-sub { font-size:11.5px; color:var(--text-muted); margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -3962,6 +3966,9 @@
         }
 
         function onPlayerStateChange(event) {
+            if (event.data == PS.PLAYING) {
+                try { markTrackHeard(nowPlayingTracks[nowPlayingIndex]); } catch (e) {}
+            }
             // Prima conferma affidabile che il video "attivo" per l'IFrame è davvero
             // quello dell'ultimo loadVideoById/cueVideoById: da qui in poi getCurrentTime()
             // e getDuration() riflettono il video nuovo, non più quello uscente (vedi
@@ -6186,9 +6193,81 @@
             return entry;
         }
 
+        // --- BRANI "NEW" NELLE PLAYLIST ---
+        // Ogni volta che una playlist viene riletta (controllo automatico settimanale, pulsante di
+        // aggiornamento, riapertura dopo la scadenza della cache) si confronta con la versione salvata:
+        // i brani che prima non c'erano vengono segnati "new" e restano tali finche' non li riproduci
+        // almeno una volta (in qualunque playlist). Si segnano solo le playlist (Spotify e YouTube Music),
+        // non album, artisti o classifiche; e solo se la versione precedente esisteva (il primo import
+        // di una playlist non segna tutto come nuovo).
+        const NEW_TRACKS_KEY = 'sbixify_new_tracks';
+        function loadNewTracks() {
+            try { return JSON.parse(localStorage.getItem(NEW_TRACKS_KEY)) || {}; } catch (e) { return {}; }
+        }
+        function saveNewTracks(obj) {
+            try { localStorage.setItem(NEW_TRACKS_KEY, JSON.stringify(obj)); } catch (e) {}
+        }
+        function isNewTrackablePlaylistUrl(url) {
+            if (!url) return false;
+            if (typeof YTM_URL_PREFIX !== 'undefined' && url.startsWith(YTM_URL_PREFIX)) return true;
+            return isSpotifyPlaylistLink(url) && !isSpotifyAlbumLink(url) && !isSpotifyArtistLink(url);
+        }
+        function newBadgeHtml(key) {
+            return `<span class="new-badge" data-key="${encodeURIComponent(key)}">NEW</span>`;
+        }
+        function markNewTracks(url, oldTracks, newTracks) {
+            if (!isNewTrackablePlaylistUrl(url) || !oldTracks || oldTracks.length === 0 || !newTracks || newTracks.length === 0) return;
+            const oldKeys = new Set(oldTracks.map(t => trackCacheKey(t.title, t.channel)));
+            const added = newTracks.filter(t => !oldKeys.has(trackCacheKey(t.title, t.channel)));
+            // Se cambia quasi tutta la lista (playlist svuotata e rifatta, cambio di formato) non ha senso segnare tutto
+            if (added.length === 0 || added.length > Math.max(30, newTracks.length * 0.6)) return;
+            const store = loadNewTracks();
+            const map = store[url] || {};
+            const now = Date.now();
+            added.forEach(t => { const k = trackCacheKey(t.title, t.channel); if (!map[k]) map[k] = now; });
+            const keys = Object.keys(map);
+            if (keys.length > 300) keys.sort((a, b) => map[a] - map[b]).slice(0, keys.length - 300).forEach(k => delete map[k]);
+            store[url] = map;
+            saveNewTracks(store);
+        }
+        // Un brano e' stato riprodotto: sparisce il "new" in tutte le playlist
+        function markTrackHeard(track) {
+            if (!track) return;
+            const key = trackCacheKey(track.title, track.channel);
+            const store = loadNewTracks();
+            let changed = false;
+            Object.keys(store).forEach(u => {
+                if (store[u][key]) {
+                    delete store[u][key];
+                    changed = true;
+                    if (Object.keys(store[u]).length === 0) delete store[u];
+                }
+            });
+            if (!changed) return;
+            saveNewTracks(store);
+            const enc = encodeURIComponent(key);
+            document.querySelectorAll('.new-badge').forEach(el => { if (el.dataset.key === enc) el.remove(); });
+        }
+        // Aggiunge le etichette alle righe GIA' disegnate (es. la lista e' aperta mentre il controllo gira)
+        function applyNewBadges() {
+            if (typeof currentLoadedKey === 'undefined' || !currentLoadedKey || !currentLoadedKey.startsWith('playlist:')) return;
+            const map = loadNewTracks()[currentLoadedKey.slice('playlist:'.length)];
+            if (!map) return;
+            appState.tracks.forEach((t, i) => {
+                const key = trackCacheKey(t.title, t.channel);
+                if (!map[key]) return;
+                const row = document.getElementById('track-row-' + i);
+                if (!row || row.querySelector('.new-badge')) return;
+                const sub = row.querySelectorAll('p')[1];
+                if (sub) sub.insertAdjacentHTML('afterbegin', newBadgeHtml(key));
+            });
+        }
+
         function setCachedPlaylistTracks(url, { name, artwork = null, tracks }) {
             if (!url || !tracks || tracks.length === 0) return;
             const cache = loadPlaylistTracksCache();
+            // Confronto con la versione precedente (anche se scaduta): i brani nuovi vengono segnati "new"
+            try { markNewTracks(url, cache[url] && cache[url].tracks, tracks); } catch (e) { console.warn('new-tracks:', e); }
             cache[url] = { name, artwork, tracks, ts: Date.now() };
 
             const keys = Object.keys(cache);
@@ -6198,6 +6277,7 @@
                 toRemove.forEach(k => delete cache[k]);
             }
             savePlaylistTracksCache(cache);
+            try { applyNewBadges(); } catch (e) {}
         }
 
         // Aggiorna in-place, nella cache di UNA playlist già salvata, l'id YouTube di un
@@ -6430,6 +6510,21 @@
         // semplicemente non risolti finché la playlist non viene aperta davvero (stessa
         // logica, invariata, dell'import manuale).
         async function silentRefreshPlaylist(url) {
+            // Playlist di YouTube Music (solo app Android): stessa logica, letta dal telefono
+            if (typeof YTM_URL_PREFIX !== 'undefined' && url && url.startsWith(YTM_URL_PREFIX)) {
+                if (!nativeHttp()) return;
+                try {
+                    const pl = await NR.getPlaylist(url.slice(YTM_URL_PREFIX.length));
+                    if (!pl.tracks.length) return;
+                    const name = pl.title || 'Playlist';
+                    const artwork = pl.thumb || pl.tracks[0].thumbnail || null;
+                    setCachedPlaylistTracks(url, { name, artwork, tracks: pl.tracks });
+                    updateRecentPlaylistMeta(url, { name, artwork });
+                } catch (err) {
+                    console.warn('Auto-refresh fallito per la playlist YouTube Music ' + url + ':', err);
+                }
+                return;
+            }
             const isAlbum = isSpotifyAlbumLink(url) && !isSpotifyPlaylistLink(url) && !isSpotifyArtistLink(url);
             const isArtist = !isAlbum && isSpotifyArtistLink(url) && !isSpotifyPlaylistLink(url);
             const playlistId = isAlbum ? extractSpotifyAlbumId(url) : (isArtist ? extractSpotifyArtistId(url) : extractSpotifyPlaylistId(url));
@@ -9387,9 +9482,15 @@
 
             if (resultsStatusText) resultsStatusText.classList.add('hidden');
 
+            // Brani "new" della playlist aperta (solo per le playlist, non per ricerche o album)
+            const newMap = (typeof currentLoadedKey !== 'undefined' && currentLoadedKey && currentLoadedKey.startsWith('playlist:'))
+                ? (loadNewTracks()[currentLoadedKey.slice('playlist:'.length)] || {}) : {};
+
             for (let index = fromIndex; index < appState.tracks.length; index++) {
                 const track = appState.tracks[index];
                 const isPlaying = appState.currentIndex === index;
+                const newKey = trackCacheKey(track.title, track.channel);
+                const isNewTrack = !!newMap[newKey];
                 const trackRow = document.createElement('div');
                 trackRow.id = `track-row-${index}`;
                 trackRow.className = `track-row track-row-enter flex items-center gap-3.5 py-2.5 cursor-pointer transition-colors${isPlaying ? ' playing' : ''}`;
@@ -9404,7 +9505,7 @@
                     </div>
                     <div class="flex-1 overflow-hidden">
                         <p class="text-sm font-bold truncate ${isPlaying ? 'custom-text-accent font-black' : 'text-white'}">${escapeHtml(track.title)}</p>
-                        <p class="text-xs truncate mt-1 custom-text-muted font-medium">${escapeHtml(track.channel)}</p>
+                        <p class="text-xs truncate mt-1 custom-text-muted font-medium">${isNewTrack ? newBadgeHtml(newKey) : ''}${escapeHtml(track.channel)}</p>
                     </div>
                 `;
                 // Pressione prolungata: apre "Correggi canzone" per questo brano. Tenuta
