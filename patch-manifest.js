@@ -14,7 +14,7 @@ if (!x.includes('usesCleartextTraffic')) {
   changed = true;
 }
 
-const perms = ['VIBRATE', 'WAKE_LOCK', 'FOREGROUND_SERVICE', 'FOREGROUND_SERVICE_MEDIA_PLAYBACK', 'POST_NOTIFICATIONS'];
+const perms = ['VIBRATE', 'WAKE_LOCK', 'FOREGROUND_SERVICE', 'FOREGROUND_SERVICE_MEDIA_PLAYBACK', 'POST_NOTIFICATIONS', 'REQUEST_IGNORE_BATTERY_OPTIMIZATIONS'];
 for (const perm of perms) {
   if (!x.includes('android.permission.' + perm + '"')) {
     x = x.replace('<application', () => '<uses-permission android:name="android.permission.' + perm + '" />\n    <application');

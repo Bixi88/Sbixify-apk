@@ -22,11 +22,13 @@ import android.media.MediaMetadata;
 import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
 import android.net.Uri;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Environment;
 import android.os.IBinder;
 import android.os.PowerManager;
 import android.provider.MediaStore;
+import android.provider.Settings;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.os.VibratorManager;
@@ -79,6 +81,7 @@ import java.util.regex.Pattern;
  *  - getCutoutInsets(): ingombro del foro fotocamera a sinistra/destra (per la schermata testi).
  *  - setScreenMode(): orientamento orizzontale forzato + schermo sempre acceso (schermata testi).
  *  - takeSharedText(): testo ricevuto dal menu Condividi di Android (es. link di una playlist Spotify).
+ *  - requestBatteryExemption(): esclude l'app dal risparmio batteria (musica in background).
  *  - exitApp():       chiusura completa (ferma notifica e servizio).
  *  - setMediaInfo():  notifica multimediale + servizio in primo piano (la musica continua a schermo
  *                     spento) con i pulsanti precedente / play-pausa / successivo.
@@ -586,6 +589,7 @@ public class NativeHttpPlugin extends Plugin {
 
         private MediaSession session;
         private PowerManager.WakeLock wakeLock;
+        private WifiManager.WifiLock wifiLock;
         private Bitmap art;
         private String artUrl = "";
         private boolean fg = false;
@@ -663,6 +667,15 @@ public class NativeHttpPlugin extends Plugin {
             PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
             wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "sbixify:playback");
             wakeLock.setReferenceCounted(false);
+            // A schermo spento il Wi-Fi puo' andare in risparmio e far saltare lo streaming: lo teniamo attivo mentre suona
+            try {
+                WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+                if (wm != null) {
+                    wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "sbixify:wifi");
+                    wifiLock.setReferenceCounted(false);
+                }
+            } catch (Exception ignored) {
+            }
         }
 
         @Override
@@ -704,6 +717,9 @@ public class NativeHttpPlugin extends Plugin {
                 if (wakeLock != null && wakeLock.isHeld()) {
                     wakeLock.release();
                 }
+                if (wifiLock != null && wifiLock.isHeld()) {
+                    wifiLock.release();
+                }
                 if (session != null) {
                     session.release();
                 }
@@ -726,6 +742,9 @@ public class NativeHttpPlugin extends Plugin {
                 if (!wakeLock.isHeld()) {
                     wakeLock.acquire(6L * 60L * 60L * 1000L);
                 }
+                if (wifiLock != null && !wifiLock.isHeld()) {
+                    wifiLock.acquire();
+                }
             } else {
                 if (!fg) {
                     startFg(n); // dopo startForegroundService Android pretende comunque startForeground
@@ -735,6 +754,9 @@ public class NativeHttpPlugin extends Plugin {
                 notificationManager().notify(NOTIF_ID, n);
                 if (wakeLock.isHeld()) {
                     wakeLock.release();
+                }
+                if (wifiLock != null && wifiLock.isHeld()) {
+                    wifiLock.release();
                 }
             }
         }
@@ -955,6 +977,48 @@ public class NativeHttpPlugin extends Plugin {
             }
             JSObject res = new JSObject();
             res.put("filename", name);
+            call.resolve(res);
+        } catch (Exception e) {
+            call.reject(String.valueOf(e.getMessage()));
+        }
+    }
+
+    // ------------------------------------------------------------------ risparmio batteria
+
+    /** Android puo' fermare la musica a schermo spento o in background se l'app e' soggetta al risparmio batteria. */
+    @PluginMethod
+    public void getBatteryStatus(PluginCall call) {
+        try {
+            boolean ignoring = false;
+            if (Build.VERSION.SDK_INT >= 23) {
+                PowerManager pm = (PowerManager) getContext().getSystemService(Context.POWER_SERVICE);
+                ignoring = pm.isIgnoringBatteryOptimizations(getContext().getPackageName());
+            }
+            JSObject res = new JSObject();
+            res.put("ignoring", ignoring);
+            call.resolve(res);
+        } catch (Exception e) {
+            call.reject(String.valueOf(e.getMessage()));
+        }
+    }
+
+    /** Apre la richiesta di sistema per escludere Sbixify dal risparmio batteria (se non lo e' gia'). */
+    @PluginMethod
+    public void requestBatteryExemption(PluginCall call) {
+        try {
+            String pkg = getContext().getPackageName();
+            boolean ignoring = false;
+            if (Build.VERSION.SDK_INT >= 23) {
+                PowerManager pm = (PowerManager) getContext().getSystemService(Context.POWER_SERVICE);
+                ignoring = pm.isIgnoringBatteryOptimizations(pkg);
+                if (!ignoring) {
+                    Intent i = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + pkg));
+                    i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    getContext().startActivity(i);
+                }
+            }
+            JSObject res = new JSObject();
+            res.put("ignoring", ignoring);
             call.resolve(res);
         } catch (Exception e) {
             call.reject(String.valueOf(e.getMessage()));

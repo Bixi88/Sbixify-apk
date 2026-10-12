@@ -2255,7 +2255,7 @@
                 <i class="fa-solid fa-equals mr-2.5 custom-text-accent"></i> Impostazioni
             </h3>
             
-            <div class="mb-2" id="searchServiceSection">
+            <div class="mb-2" id="searchServiceSection" style="display:none">
                 <div class="flex items-center justify-between mb-2">
                     <label class="block text-xs font-bold uppercase tracking-wider custom-text-muted">Servizio di ricerca</label>
                     <span id="modalApiBadgeError" class="hidden text-[10px] font-bold text-red-500 bg-red-500/10 border border-red-500/20 px-2 py-0.5 rounded-full animate-pulse">Non disponibile</span>
@@ -2271,6 +2271,16 @@
                     <button id="downloadUpdateBtn" type="button" class="hidden font-semibold text-xs px-4 py-2 rounded-xl active:scale-95 transition-all border border-white/10 custom-text-muted">Scarica</button>
                 </div>
                 <p id="updateMsg" class="text-[10px] mt-2 custom-text-muted leading-snug"></p>
+            </div>
+
+            <div class="mt-5 border-t border-white/5 pt-4" id="bgAudioSection">
+                <label class="block text-xs font-bold uppercase tracking-wider custom-text-muted mb-2">Audio in background</label>
+                <p class="text-[10px] custom-text-muted leading-snug mb-3">Se la musica si ferma a schermo spento o quando esci dall'app (soprattutto con il Bluetooth), escludi Sbixify dal risparmio batteria. Se il problema resta, "Copia diagnostica" mi dice cosa è successo.</p>
+                <div class="flex space-x-2">
+                    <button id="batteryExemptBtn" type="button" class="font-bold text-xs px-4 py-2 rounded-xl active:scale-95 transition-all custom-bg-accent" style="color:#1a1305;">Escludi dal risparmio batteria</button>
+                    <button id="audioLogBtn" type="button" class="font-semibold text-xs px-4 py-2 rounded-xl active:scale-95 transition-all border border-white/10 custom-text-muted">Copia diagnostica</button>
+                </div>
+                <p id="bgAudioMsg" class="text-[10px] mt-2 custom-text-muted leading-snug"></p>
             </div>
 
             <div class="mt-5 border-t border-white/5 pt-4" id="backupSection">
@@ -3226,6 +3236,54 @@
             }
         });
 
+        // --- DIAGNOSTICA AUDIO ---
+        const AUDIO_LOG_KEY = 'sbixify_audio_log';
+        function logAudioEvent(ev, a) {
+            let log;
+            try { log = JSON.parse(localStorage.getItem(AUDIO_LOG_KEY)) || []; } catch (e) { log = []; }
+            const d = new Date();
+            const p2 = (n) => String(n).padStart(2, '0');
+            log.push({
+                ora: p2(d.getHours()) + ':' + p2(d.getMinutes()) + ':' + p2(d.getSeconds()),
+                evento: ev,
+                inBackground: !!document.hidden,
+                secondo: Math.floor(a.currentTime || 0),
+                readyState: a.readyState, networkState: a.networkState,
+                errore: a.error ? a.error.code : null,
+                online: navigator.onLine
+            });
+            while (log.length > 60) log.shift();
+            try { localStorage.setItem(AUDIO_LOG_KEY, JSON.stringify(log)); } catch (e) {}
+        }
+        window.addEventListener('load', () => {
+            const msg = document.getElementById('bgAudioMsg');
+            const battBtn = document.getElementById('batteryExemptBtn');
+            const logBtn = document.getElementById('audioLogBtn');
+            if (!msg || !battBtn || !logBtn) return;
+            const np = nativeHttp();
+            if (!np) { document.getElementById('bgAudioSection').style.display = 'none'; return; }
+            if (np.getBatteryStatus) {
+                Promise.resolve(np.getBatteryStatus()).then((r) => {
+                    if (r && r.ignoring) msg.textContent = 'Sbixify è già escluso dal risparmio batteria.';
+                }).catch(() => {});
+            }
+            battBtn.addEventListener('click', async () => {
+                try {
+                    const r = await np.requestBatteryExemption();
+                    msg.textContent = r && r.ignoring
+                        ? 'Sbixify è già escluso dal risparmio batteria.'
+                        : 'Si è aperta la schermata di Android: scegli "Consenti".';
+                } catch (e) { msg.textContent = 'Non riesco ad aprire la schermata: ' + ((e && e.message) || e); }
+            });
+            logBtn.addEventListener('click', async () => {
+                let log = '[]';
+                try { log = localStorage.getItem(AUDIO_LOG_KEY) || '[]'; } catch (e) {}
+                const txt = 'Sbixify diagnostica audio\\n' + navigator.userAgent + '\\n' + log;
+                try { await navigator.clipboard.writeText(txt); msg.textContent = 'Copiato: incollalo nella chat.'; }
+                catch (e) { msg.textContent = 'Non riesco a copiare negli appunti.'; }
+            });
+        });
+
         class HybridPlayer {
             constructor() {
                 const a = this.a = new Audio();
@@ -3268,6 +3326,10 @@
                 });
                 a.addEventListener('error', () => {
                     if (this.mode === 'audio' && a.getAttribute('src')) this._onAudioError();
+                });
+                // Diagnostica: cosa succede all'audio, e se la pagina era in background
+                ['pause', 'ended', 'error', 'stalled', 'emptied', 'abort', 'waiting', 'playing'].forEach((ev) => {
+                    a.addEventListener(ev, () => { try { logAudioEvent(ev, a); } catch (e) {} });
                 });
             }
 
@@ -6767,6 +6829,62 @@
             empty.classList.toggle('hidden', hasSomething);
         }
 
+        // --- COPERTINE: alternative automatiche ---
+        // Le copertine delle playlist di YouTube Music arrivano da un solo indirizzo: se non carica la
+        // riga restava vuota. Ora, se l'immagine fallisce, si provano in ordine le miniature YouTube del
+        // brano (hqdefault -> mqdefault -> default); e i cerchi della home si riparano da soli.
+        window.sbxThumbFallback = function (img) {
+            const id = img && img.dataset && img.dataset.id;
+            if (!id) return;                                   // brani senza id (Spotify non ancora risolti): niente da fare
+            const step = parseInt(img.dataset.fb || '0', 10);
+            const ladder = ['https://i.ytimg.com/vi/' + id + '/hqdefault.jpg',
+                            'https://i.ytimg.com/vi/' + id + '/mqdefault.jpg',
+                            'https://i.ytimg.com/vi/' + id + '/default.jpg'];
+            if (step < ladder.length) { img.dataset.fb = String(step + 1); img.src = ladder[step]; }
+            else img.style.visibility = 'hidden';
+        };
+        function probeImage(url, ms) {
+            return new Promise((resolve) => {
+                if (!url) { resolve(false); return; }
+                const im = new Image();
+                let done = false;
+                const fin = (ok) => { if (!done) { done = true; resolve(ok); } };
+                im.onload = () => fin(true);
+                im.onerror = () => fin(false);
+                setTimeout(() => fin(false), ms || 2500);
+                im.src = url;
+            });
+        }
+        async function pickWorkingImage(urls) {
+            for (const u of urls) { if (u && await probeImage(u)) return u; }
+            return urls.find(Boolean) || null;
+        }
+        // Cerchi della home: se la copertina di una playlist YouTube Music non carica, usa quella del primo brano
+        function repairYtmArtworks(items) {
+            if (!nativeHttp() || typeof YTM_URL_PREFIX === 'undefined') return;
+            items.forEach((it, i) => {
+                if (!it.url || !it.url.startsWith(YTM_URL_PREFIX)) return;
+                const circle = document.querySelector('#recentGrid .qcard[data-index="' + i + '"] .circle');
+                if (!circle) return;
+                const fallback = () => {
+                    const raw = loadPlaylistTracksCache()[it.url];
+                    const first = raw && raw.tracks && raw.tracks.find(t => t.id);
+                    if (!first) return;
+                    const alt = 'https://i.ytimg.com/vi/' + first.id + '/hqdefault.jpg';
+                    probeImage(alt).then((ok) => {
+                        if (!ok) return;
+                        circle.style.backgroundImage = "url('" + alt + "')";
+                        const all = loadRecentItems();
+                        const k = all.findIndex(x => x.url === it.url);
+                        if (k >= 0) { all[k].artwork = alt; saveRecentItems(all); }
+                        try { updateRecentPlaylistMeta(it.url, { name: it.name, artwork: alt }); } catch (e) {}
+                    });
+                };
+                if (it.artwork) probeImage(it.artwork).then((ok) => { if (!ok) fallback(); });
+                else fallback();
+            });
+        }
+
         function renderRecentHome() {
             const grid = document.getElementById('recentGrid');
             if (!grid) return;
@@ -6792,6 +6910,7 @@
                     <div class="name">${escapeHtml(it.name)}</div>
                 </div>
             `).join('');
+            try { repairYtmArtworks(items); } catch (e) {}
 
             const LONG_PRESS_MS = 500;
             grid.querySelectorAll('.qcard').forEach(card => {
@@ -8516,7 +8635,7 @@
                 card.style.width = '104px';
                 card.innerHTML = `
                     <div class="rounded-xl overflow-hidden bg-neutral-800 flex items-center justify-center" style="width:104px;height:104px;">
-                        ${p.thumb ? `<img src="${p.thumb}" class="w-full h-full object-cover" alt="" loading="lazy">` : '<i class="fa-solid fa-list-music text-neutral-500"></i>'}
+                        ${p.thumb ? `<img src="${p.thumb}" class="w-full h-full object-cover" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.visibility='hidden'">` : '<i class="fa-solid fa-list-music text-neutral-500"></i>'}
                     </div>
                     <p class="text-[11px] font-semibold mt-1.5 text-white" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${escapeHtml(p.title)}</p>
                     <p class="text-[10px] truncate custom-text-muted">${escapeHtml(p.subtitle || '')}</p>`;
@@ -8565,7 +8684,11 @@
                 const pl = await NR.getPlaylist(id);
                 if (!pl.tracks.length) throw new Error('Playlist vuota o non disponibile.');
                 const name = pl.title || (hint && hint.title) || 'Playlist';
-                const artwork = pl.thumb || (hint && hint.thumb) || pl.tracks[0].thumbnail || null;
+                const firstWithId = pl.tracks.find(t => t.id);
+                const artwork = await pickWorkingImage([
+                    pl.thumb, hint && hint.thumb,
+                    firstWithId ? 'https://i.ytimg.com/vi/' + firstWithId.id + '/hqdefault.jpg' : null
+                ]);
 
                 currentListSource = 'spotify';
                 appState.tracks = pl.tracks;
@@ -9500,7 +9623,7 @@
 
                 trackRow.innerHTML = `
                     <div class="rounded-full overflow-hidden shrink-0 flex items-center justify-center bg-neutral-800 relative track-thumb-wrap" style="width:44px;height:44px;">
-                        <img id="track-img-${index}" src="${track.thumbnail || (track.id ? `https://img.youtube.com/vi/${track.id}/mqdefault.jpg` : '')}" class="w-full h-full object-cover track-thumb-img" alt="" onload="this.classList.add('loaded')">
+                        <img id="track-img-${index}" src="${track.thumbnail || (track.id ? `https://img.youtube.com/vi/${track.id}/mqdefault.jpg` : '')}" class="w-full h-full object-cover track-thumb-img" alt="" referrerpolicy="no-referrer" data-id="${track.id || ''}" onerror="sbxThumbFallback(this)" onload="this.classList.add('loaded')">
                         ${!track.id ? '<i class="fa-brands fa-spotify absolute bottom-0.5 right-0.5 text-[10px] text-[var(--accent)] drop-shadow"></i>' : ''}
                     </div>
                     <div class="flex-1 overflow-hidden">
