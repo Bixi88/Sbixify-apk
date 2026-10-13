@@ -6833,6 +6833,14 @@
         // Le copertine delle playlist di YouTube Music arrivano da un solo indirizzo: se non carica la
         // riga restava vuota. Ora, se l'immagine fallisce, si provano in ordine le miniature YouTube del
         // brano (hqdefault -> mqdefault -> default); e i cerchi della home si riparano da soli.
+        // Memoria delle miniature gia' caricate in questa sessione: alla riapertura di una lista le
+        // righe vengono disegnate GIA' visibili, senza ripartire invisibili e rifare la dissolvenza
+        // (che sembrava un "ricaricamento" delle copertine rotonde).
+        window.__sbxThumbSeen = new Set();
+        window.sbxThumbLoaded = function (img) {
+            img.classList.add('loaded');
+            try { window.__sbxThumbSeen.add(img.currentSrc || img.src); } catch (e) {}
+        };
         window.sbxThumbFallback = function (img) {
             const id = img && img.dataset && img.dataset.id;
             if (!id) return;                                   // brani senza id (Spotify non ancora risolti): niente da fare
@@ -6860,10 +6868,13 @@
             return urls.find(Boolean) || null;
         }
         // Cerchi della home: se la copertina di una playlist YouTube Music non carica, usa quella del primo brano
+        const artworkChecked = new Set();
         function repairYtmArtworks(items) {
             if (!nativeHttp() || typeof YTM_URL_PREFIX === 'undefined') return;
             items.forEach((it, i) => {
                 if (!it.url || !it.url.startsWith(YTM_URL_PREFIX)) return;
+                if (artworkChecked.has(it.url + '|' + (it.artwork || ''))) return;   // gia' controllata in questa sessione
+                artworkChecked.add(it.url + '|' + (it.artwork || ''));
                 const circle = document.querySelector('#recentGrid .qcard[data-index="' + i + '"] .circle');
                 if (!circle) return;
                 const fallback = () => {
@@ -9614,6 +9625,8 @@
                 const isPlaying = appState.currentIndex === index;
                 const newKey = trackCacheKey(track.title, track.channel);
                 const isNewTrack = !!newMap[newKey];
+                const thumbSrc = track.thumbnail || (track.id ? `https://img.youtube.com/vi/${track.id}/mqdefault.jpg` : '');
+                const thumbSeenClass = window.__sbxThumbSeen.has(thumbSrc) ? ' loaded' : '';
                 const trackRow = document.createElement('div');
                 trackRow.id = `track-row-${index}`;
                 trackRow.className = `track-row track-row-enter flex items-center gap-3.5 py-2.5 cursor-pointer transition-colors${isPlaying ? ' playing' : ''}`;
@@ -9623,7 +9636,7 @@
 
                 trackRow.innerHTML = `
                     <div class="rounded-full overflow-hidden shrink-0 flex items-center justify-center bg-neutral-800 relative track-thumb-wrap" style="width:44px;height:44px;">
-                        <img id="track-img-${index}" src="${track.thumbnail || (track.id ? `https://img.youtube.com/vi/${track.id}/mqdefault.jpg` : '')}" class="w-full h-full object-cover track-thumb-img" alt="" referrerpolicy="no-referrer" data-id="${track.id || ''}" onerror="sbxThumbFallback(this)" onload="this.classList.add('loaded')">
+                        <img id="track-img-${index}" src="${thumbSrc}" class="w-full h-full object-cover track-thumb-img${thumbSeenClass}" alt="" referrerpolicy="no-referrer" data-id="${track.id || ''}" onerror="sbxThumbFallback(this)" onload="sbxThumbLoaded(this)">
                         ${!track.id ? '<i class="fa-brands fa-spotify absolute bottom-0.5 right-0.5 text-[10px] text-[var(--accent)] drop-shadow"></i>' : ''}
                     </div>
                     <div class="flex-1 overflow-hidden">
