@@ -1752,25 +1752,26 @@
            poca (barre del browser, schermi bassi). Margini laterali --lx-l/--lx-r: 44px, oppure di
            piu' dal lato del foro fotocamera (li scrive applyLandscapeInsets in JS).
            NB: i !important servono solo dove l'elemento ha width/height/padding inline o classi Tailwind. */
-        :root { --lx-l: 44px; --lx-r: 44px; }
+        :root { --lx-l: 44px; --lx-r: 44px; --pane-r: var(--lx-r); --mini-w: clamp(240px, 34vw, 320px); }
+        #miniPrevBtn, #miniNextBtn, #miniLyricsBtn { display: none; }
         #lyricsLandBtn { display: none; }
         @media (orientation: landscape) {
             /* ---- Home ---- */
-            .home-header { display: flex; align-items: center; gap: 14px; padding: 8px var(--lx-r) 0 var(--lx-l); }
+            .home-header { display: flex; align-items: center; gap: 14px; padding: 8px var(--pane-r) 0 var(--lx-l); }
             .home-header-row { flex: 0 0 auto; height: clamp(44px, 15vh, 56px); gap: 8px; }
             .menu-icon-btn { width: clamp(44px, 15vh, 56px); height: clamp(44px, 15vh, 56px); }
             .app-title { position: static; transform: none; font-size: clamp(20px, 8vh, 26px); }
             .search-pill { flex: 1; min-width: 0; margin-top: 0; padding: clamp(10px, 3.6vh, 16px) 22px; }
             .search-pill .mag-btn { font-size: clamp(16px, 6vh, 20px); }
             #searchInput { font-size: clamp(14px, 5vh, 17px) !important; }
-            .quick-eyebrow { padding-left: var(--lx-l); padding-right: var(--lx-r); font-size: clamp(14px, 5vh, 16px); }
+            .quick-eyebrow { padding-left: var(--lx-l); padding-right: var(--pane-r); font-size: clamp(14px, 5vh, 16px); }
             .home-header + .quick-eyebrow { padding-top: 22px; }
-            .quick-grid, .charts-row { grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 16px 14px; }
-            .quick-grid { padding: 12px var(--lx-r) 18px var(--lx-l); }
-            .charts-row { padding: 10px var(--lx-r) 8px var(--lx-l); }
+            .quick-grid, .charts-row { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 16px 14px; }
+            .quick-grid { padding: 12px var(--pane-r) 18px var(--lx-l); }
+            .charts-row { padding: 10px var(--pane-r) 8px var(--lx-l); }
             .qcard .name { font-size: clamp(12.5px, 4.6vh, 14px); }
             .chart-card .chart-card-label { font-size: clamp(12.5px, 4.6vh, 14px); }
-            .tracks-col, .artists-col { display: grid; grid-template-columns: 1fr 1fr; column-gap: 36px; padding: 2px var(--lx-r) 8px var(--lx-l); }
+            .tracks-col, .artists-col { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); column-gap: 36px; padding: 2px var(--pane-r) 8px var(--lx-l); }
             .home-track-row { gap: 16px; padding: 0; min-height: clamp(60px, 18vh, 72px); }
             .home-track-row .track-thumb-wrap { width: clamp(44px, 16vh, 52px) !important; height: clamp(44px, 16vh, 52px) !important; }
             .home-track-row:not(:last-child)::after { left: calc(clamp(44px, 16vh, 52px) + 16px); }
@@ -1780,14 +1781,14 @@
             .artist-row .artist-thumb { width: clamp(48px, 17vh, 60px); height: clamp(48px, 17vh, 60px); }
             .artist-row .artist-meta .a-name { font-size: clamp(15px, 5.4vh, 18px); }
             .artist-row:not(:last-child)::after { left: calc(50px + clamp(48px, 17vh, 60px)); }
-            #homeView { padding-bottom: 128px !important; }
+            #homeView { padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px)) !important; }
 
             /* ---- Lista canzoni / risultati ---- */
-            .results-header { padding: 6px var(--lx-r) 6px var(--lx-l); height: auto; min-height: clamp(52px, 17vh, 64px); gap: 16px; }
+            .results-header { padding: 6px var(--pane-r) 6px var(--lx-l); height: auto; min-height: clamp(52px, 17vh, 64px); gap: 16px; }
             .results-header .back-btn { width: clamp(44px, 15vh, 56px); height: clamp(44px, 15vh, 56px); }
             .results-header .rt { font-size: clamp(16px, 6vh, 19px); }
             .results-header .refresh-btn { width: clamp(40px, 13vh, 48px); height: clamp(40px, 13vh, 48px); font-size: clamp(14px, 5vh, 17px); }
-            #trackList { display: grid; grid-template-columns: 1fr 1fr; column-gap: 36px; padding-left: var(--lx-l) !important; padding-right: var(--lx-r) !important; padding-bottom: 128px !important; }
+            #trackList { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); column-gap: 36px; padding-left: var(--lx-l) !important; padding-right: var(--pane-r) !important; padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px)) !important; }
             #trackList > *:not(.track-row), #trackList > .track-row-artist { grid-column: 1 / -1; }
             .track-row { padding-top: clamp(8px, 3vh, 12px) !important; padding-bottom: clamp(8px, 3vh, 12px) !important; gap: 16px !important; }
             .track-row .track-thumb-wrap { width: clamp(44px, 16vh, 52px) !important; height: clamp(44px, 16vh, 52px) !important; }
@@ -1796,15 +1797,27 @@
             .track-row .text-xs { font-size: clamp(12px, 4vh, 13.5px); }
             .track-row.track-row-artist .text-sm { font-size: clamp(15px, 5.4vh, 18px); }
 
-            /* ---- Mini player: stessa forma e struttura del verticale, solo piu' grande ---- */
-            #miniPlayer { left: var(--lx-l) !important; right: var(--lx-r) !important; bottom: calc(12px + env(safe-area-inset-bottom, 0px)) !important; height: clamp(76px, 29vh, 100px) !important; }
-            #miniPlayerDetails { height: clamp(44px, 17vh, 60px) !important; }
-            #miniPlayerImgFrame { width: clamp(44px, 17vh, 60px) !important; height: clamp(44px, 17vh, 60px) !important; }
-            #miniPlayerTitle { font-size: clamp(14px, 5.4vh, 18px) !important; }
-            #miniPlayerChannel { font-size: clamp(12px, 4.2vh, 14px) !important; }
-            #miniPlayPauseBtn { width: clamp(38px, 15vh, 56px) !important; height: clamp(38px, 15vh, 56px) !important; font-size: clamp(15px, 6vh, 22px) !important; }
-            #miniProgressBarArea { font-size: clamp(10px, 3.4vh, 13px) !important; }
+            /* ---- Mini player: CARD A DESTRA (come Android Auto), tutta la UI di playlist e liste a sinistra ----
+               Estetica nostra (colore pieno dell'artwork, play bianco). Nella card: copertina + pulsante testi in
+               alto, titolo/artista, barra con i tempi, poi prev / play / next. Il pannello sinistro si restringe
+               solo quando il mini player e' visibile (classe .visible), altrimenti usa tutta la larghezza.
+               I nuovi pulsanti stanno dentro #miniPlayerControls: il codice esistente li esclude gia' da tap e swipe. */
+            html:has(#miniPlayer.visible) { --pane-r: 6px; }
+            html:has(#miniPlayer.visible) main { margin-right: calc(var(--lx-r) + var(--mini-w) + 14px); }
+            #miniPlayer { left: auto !important; right: var(--lx-r) !important; top: calc(env(safe-area-inset-top, 0px) + 12px) !important; bottom: calc(12px + env(safe-area-inset-bottom, 0px)) !important; width: var(--mini-w) !important; height: auto !important; display: grid !important; grid-template-columns: 1fr 1fr 1fr; grid-template-rows: auto auto auto 1fr; row-gap: clamp(2px, 1.2vh, 8px); align-items: center; padding: clamp(8px, 3vh, 14px) 14px !important; }
+            #miniPlayerContent, #miniPlayerDetails, #miniPlayerControls { display: contents !important; }
+            #miniPlayerImgFrame { grid-area: 1 / 1 / 2 / 3; justify-self: start; width: clamp(48px, 26vh, 92px) !important; height: clamp(48px, 26vh, 92px) !important; }
+            #miniTextContainer { grid-area: 2 / 1 / 3 / 4; margin: 0 !important; height: auto !important; min-width: 0; }
+            #miniProgressBarArea { grid-area: 3 / 1 / 4 / 4; font-size: clamp(10px, 3.4vh, 12px) !important; }
+            #miniPlayerTitle { font-size: clamp(15px, 6vh, 19px) !important; }
+            #miniPlayerChannel { font-size: clamp(12px, 4.4vh, 14px) !important; margin-top: 2px !important; }
             #miniProgressBarContainer > div, #miniProgressBar { height: clamp(4px, 1.6vh, 6px) !important; }
+            #miniPrevBtn, #miniNextBtn, #miniLyricsBtn { display: flex; align-items: center; justify-content: center; color: var(--immersive-accent-text, #111); background: none; border: 0; padding: 0; }
+            #miniLyricsBtn { grid-area: 1 / 3 / 2 / 4; justify-self: end; align-self: start; width: clamp(40px, 15vh, 52px); height: clamp(40px, 15vh, 52px); font-size: clamp(20px, 7.5vh, 26px); }
+            #miniPrevBtn { grid-area: 4 / 1 / 5 / 2; justify-self: center; }
+            #miniNextBtn { grid-area: 4 / 3 / 5 / 4; justify-self: center; }
+            #miniPrevBtn, #miniNextBtn { width: clamp(44px, 18vh, 60px); height: clamp(44px, 18vh, 60px); font-size: clamp(20px, 8vh, 28px); }
+            #miniPlayPauseBtn { grid-area: 4 / 2 / 5 / 3; justify-self: center; width: clamp(46px, 20vh, 64px) !important; height: clamp(46px, 20vh, 64px) !important; font-size: clamp(18px, 8vh, 26px) !important; }
 
             /* ---- Now Playing: stessa UI del verticale, centrata, colore Immersive senza foto ---- */
             html.immersive #immersiveBg { display: none; }
@@ -2066,9 +2079,13 @@
             </div>
 
             <div class="flex items-center gap-4 shrink-0" id="miniPlayerControls">
+                <!-- Prev / testi / next: nascosti in verticale, visibili solo nella card orizzontale (vedi CSS ORIZZONTALE) -->
+                <button id="miniPrevBtn" type="button" title="Precedente" aria-label="Precedente"><i class="fa-solid fa-backward-step"></i></button>
+                <button id="miniLyricsBtn" type="button" title="Testi a schermo intero" aria-label="Testi a schermo intero"><i class="fa-solid fa-microphone-lines"></i></button>
                 <button id="miniPlayPauseBtn" class="w-[38px] h-[38px] rounded-full flex items-center justify-center text-[15px] shadow-md custom-bg-accent transition-transform" style="color:#1a1305;">
                     <i class="fa-solid fa-play ml-0.5" id="miniPlayIcon"></i>
                 </button>
+                <button id="miniNextBtn" type="button" title="Successivo" aria-label="Successivo"><i class="fa-solid fa-forward-step"></i></button>
             </div>
         </div>
 
@@ -3714,6 +3731,13 @@
                 st.setProperty('--lx-r', Math.max((Number(i.right) || 0) + 16, 44) + 'px');
             } catch (e) {}
         }
+        // Apre la schermata nera dei testi (Modalita' Auto) direttamente, senza passare dal pannello testi.
+        // I testi sono gia' in #lyricsScroll (si caricano ad ogni cambio brano).
+        function openLyricsFullscreen() {
+            const sc = document.getElementById('lyricsScroll');
+            if (!sc || sc.children.length === 0) { try { showToast('Nessun brano in riproduzione'); } catch (err) {} return; }
+            openDriveMode();
+        }
         window.addEventListener('load', () => setTimeout(applyLandscapeInsets, 400));
         window.addEventListener('resize', () => setTimeout(applyLandscapeInsets, 350));
 
@@ -4852,6 +4876,12 @@
                 togglePlay();
             });
 
+            // Card mini player orizzontale: prev / next / testi (stanno dentro #miniPlayerControls, quindi
+            // non fanno partire ne' il click di apertura sheet ne' lo swipe del mini player).
+            document.getElementById('miniPrevBtn')?.addEventListener('click', (e) => { e.stopPropagation(); prevTrack(); });
+            document.getElementById('miniNextBtn')?.addEventListener('click', (e) => { e.stopPropagation(); nextTrack(); });
+            document.getElementById('miniLyricsBtn')?.addEventListener('click', (e) => { e.stopPropagation(); openLyricsFullscreen(); });
+
             document.getElementById('prevBtn').addEventListener('click', prevTrack);
             document.getElementById('nextBtn').addEventListener('click', nextTrack);
             document.getElementById('repeatBtn').addEventListener('click', toggleRepeat);
@@ -4909,9 +4939,7 @@
             // gia' in #lyricsScroll (si caricano ad ogni cambio brano, non serve aprire prima il pannello).
             document.getElementById('lyricsLandBtn')?.addEventListener('click', (e) => {
                 e.stopPropagation();
-                const sc = document.getElementById('lyricsScroll');
-                if (!sc || sc.children.length === 0) { try { showToast('Nessun brano in riproduzione'); } catch (err) {} return; }
-                openDriveMode();
+                openLyricsFullscreen();
             });
             // Il pannello testi con lo swipe esiste solo in verticale: se si ruota il telefono con il pannello
             // aperto lo si chiude, cosi' l'orizzontale riparte sempre dalla vista normale.
@@ -5383,7 +5411,8 @@
         // time <= currentTime e, se è cambiata rispetto a prima, aggiorna le classi e
         // fa lo scroll automatico per tenerla centrata.
         function updateActiveLyricLine(currentTime) {
-            if (!lyricsOpen || lyricsLines.length === 0) return;
+            // Vale sia con il pannello testi aperto (verticale) sia con la schermata nera aperta direttamente (orizzontale).
+            if ((!lyricsOpen && !driveModeOpen) || lyricsLines.length === 0) return;
             // Vedi commento su lyricsOffsetMs più sopra: si SOMMA (non si sottrae) perché
             // offset positivo deve "velocizzare" il testo, cioè le righe devono scattare
             // prima - equivalente a guardare avanti nel tempo di quel tanto quando si
@@ -7768,7 +7797,7 @@
             // margine dal fondo + 76px di altezza del mini player + 12px di distacco),
             // altrimenti resta semplicemente vicino al fondo come una notifica normale.
             const isMiniPlayerVisible = miniPlayer && miniPlayer.classList.contains('visible');
-            toast.style.bottom = isMiniPlayerVisible
+            toast.style.bottom = (isMiniPlayerVisible && !window.matchMedia('(orientation: landscape)').matches)
                 ? 'calc(116px + env(safe-area-inset-bottom, 0px))'
                 : 'calc(14px + env(safe-area-inset-bottom, 0px))';
             toast.style.fontFamily = "'Inter', sans-serif";
@@ -9908,7 +9937,7 @@
             // di lista sotto di lui è tecnicamente nel DOM ma visivamente coperta. La
             // trattiamo come non-visibile ai fini di questo controllo.
             const miniPlayerEl = document.getElementById('miniPlayer');
-            const coveredBottom = (miniPlayerEl && miniPlayerEl.classList.contains('visible'))
+            const coveredBottom = (miniPlayerEl && miniPlayerEl.classList.contains('visible') && !window.matchMedia('(orientation: landscape)').matches)
                 ? miniPlayerEl.getBoundingClientRect().height + 24
                 : 0;
 
