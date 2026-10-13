@@ -4010,13 +4010,13 @@
         }
 
         // Il download lo fa il gestore di sistema di Android (notifica con avanzamento, non si blocca
-        // come in Chrome): a fine download tocca la notifica per installare. Solo su richiesta.
+        // come in Chrome): a fine download l'app apre da sola l'installazione. Solo su richiesta.
         async function startUpdateDownload(url) {
             const np = nativeHttp();
             try {
                 if (np && np.downloadUpdate) {
                     await np.downloadUpdate({ url: url });
-                    try { showToast('Download avviato: segui la notifica e toccala per installare'); } catch (e) {}
+                    try { showToast('Download avviato: a fine download parte l\'installazione'); } catch (e) {}
                 } else if (np && np.openUrl) {
                     await np.openUrl({ url: url });
                 }

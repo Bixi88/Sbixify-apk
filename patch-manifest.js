@@ -1,6 +1,7 @@
 // Eseguito automaticamente da "npx cap sync" (vedi package.json, "capacitor:sync:after").
 // Aggiunge ad AndroidManifest.xml quello che serve a Sbixify: traffico verso 127.0.0.1 (proxy audio
-// locale), vibrazione, servizio di riproduzione in primo piano e permessi collegati.
+// locale), vibrazione, servizio di riproduzione in primo piano e permessi collegati (anche quello per installare
+// da solo l'aggiornamento scaricato).
 const fs = require('fs');
 
 const p = 'android/app/src/main/AndroidManifest.xml';
@@ -14,7 +15,7 @@ if (!x.includes('usesCleartextTraffic')) {
   changed = true;
 }
 
-const perms = ['VIBRATE', 'WAKE_LOCK', 'FOREGROUND_SERVICE', 'FOREGROUND_SERVICE_MEDIA_PLAYBACK', 'POST_NOTIFICATIONS', 'REQUEST_IGNORE_BATTERY_OPTIMIZATIONS'];
+const perms = ['VIBRATE', 'WAKE_LOCK', 'FOREGROUND_SERVICE', 'FOREGROUND_SERVICE_MEDIA_PLAYBACK', 'POST_NOTIFICATIONS', 'REQUEST_IGNORE_BATTERY_OPTIMIZATIONS', 'REQUEST_INSTALL_PACKAGES'];
 for (const perm of perms) {
   if (!x.includes('android.permission.' + perm + '"')) {
     x = x.replace('<application', () => '<uses-permission android:name="android.permission.' + perm + '" />\n    <application');

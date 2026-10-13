@@ -7,10 +7,13 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.BroadcastReceiver;
 import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
+import android.database.Cursor;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
@@ -77,7 +80,8 @@ import java.util.regex.Pattern;
  *  - proxyInfo():     ultimo stato HTTP del proxy (per la diagnostica).
  *  - setBarColors():  colore di barra di stato e barra di navigazione.
  *  - vibrate():       vibrazione (il WebView non supporta navigator.vibrate).
- *  - downloadUpdate(): scarica l'APK nuovo con il gestore download di sistema (solo su richiesta).
+ *  - downloadUpdate(): scarica l'APK nuovo con il gestore download di sistema (solo su richiesta); a fine
+ *                     download apre direttamente l'installazione (o manda una notifica che la apre).
  *  - getCutoutInsets(): ingombro del foro fotocamera a sinistra/destra (per la schermata testi).
  *  - setScreenMode(): orientamento orizzontale forzato + schermo sempre acceso (schermata testi).
  *  - takeSharedText(): testo ricevuto dal menu Condividi di Android (es. link di una playlist Spotify).
@@ -449,8 +453,30 @@ public class NativeHttpPlugin extends Plugin {
         }
     }
 
+    // App in primo piano? (per decidere se aprire subito l'installazione o mandare una notifica)
+    private static volatile boolean appVisible = false;
+
+    @Override
+    protected void handleOnResume() {
+        super.handleOnResume();
+        appVisible = true;
+    }
+
+    @Override
+    protected void handleOnPause() {
+        appVisible = false;
+        super.handleOnPause();
+    }
+
     @Override
     protected void handleOnDestroy() {
+        try {
+            if (updateReceiver != null) {
+                getContext().unregisterReceiver(updateReceiver);
+                updateReceiver = null;
+            }
+        } catch (Exception ignored) {
+        }
         try {
             if (serverSocket != null) {
                 serverSocket.close();
@@ -959,8 +985,11 @@ public class NativeHttpPlugin extends Plugin {
 
     /**
      * Scarica il nuovo APK con il gestore download di Android (notifica con avanzamento, riprende da
-     * solo se cade la rete). Parte solo quando l'utente preme "Scarica". A fine download si tocca la
-     * notifica per installare. Il file finisce in Download.
+     * solo se cade la rete). Parte solo quando l'utente preme "Scarica". A fine download Sbixify apre
+     * direttamente l'installazione (se l'app e' aperta) oppure manda una sua notifica che la apre: la
+     * notifica "di sistema" di fine download, per gli APK, su alcuni telefoni non faceva niente.
+     * Serve il permesso REQUEST_INSTALL_PACKAGES (aggiunto da patch-manifest.js): la prima volta Android
+     * chiede di consentire "Installa app sconosciute" a Sbixify, poi parte l'installazione.
      */
     @PluginMethod
     public void downloadUpdate(PluginCall call) {
@@ -971,18 +1000,133 @@ public class NativeHttpPlugin extends Plugin {
         }
         try {
             DownloadManager dm = (DownloadManager) getContext().getSystemService(Context.DOWNLOAD_SERVICE);
+            try {
+                // Via l'APK scaricato la volta scorsa (se Android non lo lascia cancellare, pazienza)
+                new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                        "Sbixify-aggiornamento.apk").delete();
+            } catch (Exception ignored) {
+            }
             DownloadManager.Request req = new DownloadManager.Request(Uri.parse(url));
             req.setTitle("Sbixify - aggiornamento");
-            req.setDescription("Tocca la notifica a fine download per installare");
+            req.setDescription("Download in corso: a fine download parte l'installazione");
             req.setMimeType("application/vnd.android.package-archive");
-            req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+            // Solo l'avanzamento: a fine download la notifica la manda Sbixify, e il tocco installa davvero.
+            req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE);
             req.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "Sbixify-aggiornamento.apk");
             long id = dm.enqueue(req);
+            watchUpdateDownload(dm, id);
             JSObject res = new JSObject();
             res.put("id", id);
             call.resolve(res);
         } catch (Exception e) {
             call.reject(String.valueOf(e.getMessage()));
+        }
+    }
+
+    private BroadcastReceiver updateReceiver;
+
+    private void watchUpdateDownload(final DownloadManager dm, final long id) {
+        final Context ctx = getContext();
+        try {
+            if (updateReceiver != null) {
+                ctx.unregisterReceiver(updateReceiver);
+            }
+        } catch (Exception ignored) {
+        }
+        updateReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context c, Intent intent) {
+                long got = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1);
+                if (got != id) {
+                    return;
+                }
+                try {
+                    c.unregisterReceiver(this);
+                } catch (Exception ignored) {
+                }
+                updateReceiver = null;
+                handleUpdateDownloaded(dm, id);
+            }
+        };
+        IntentFilter f = new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE);
+        if (Build.VERSION.SDK_INT >= 33) {
+            ctx.registerReceiver(updateReceiver, f, Context.RECEIVER_EXPORTED);
+        } else {
+            ctx.registerReceiver(updateReceiver, f);
+        }
+    }
+
+    private void handleUpdateDownloaded(DownloadManager dm, long id) {
+        Context ctx = getContext();
+        boolean ok = false;
+        Cursor c = null;
+        try {
+            c = dm.query(new DownloadManager.Query().setFilterById(id));
+            if (c != null && c.moveToFirst()) {
+                int st = c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
+                ok = (st == DownloadManager.STATUS_SUCCESSFUL);
+            }
+        } catch (Exception ignored) {
+        } finally {
+            if (c != null) {
+                c.close();
+            }
+        }
+        if (!ok) {
+            postUpdateNotification("Aggiornamento non scaricato", "Riprova a scaricarlo dalle impostazioni di Sbixify", null);
+            return;
+        }
+        Uri apk = null;
+        try {
+            apk = dm.getUriForDownloadedFile(id);
+        } catch (Exception ignored) {
+        }
+        if (apk == null) {
+            postUpdateNotification("Aggiornamento scaricato", "Aprilo dalla cartella Download per installarlo", null);
+            return;
+        }
+        Intent inst = new Intent(Intent.ACTION_VIEW);
+        inst.setDataAndType(apk, "application/vnd.android.package-archive");
+        inst.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        if (appVisible) {
+            try {
+                ctx.startActivity(inst);
+                return;
+            } catch (Exception ignored) {
+            }
+        }
+        // App non in primo piano: Android non permette di aprire una schermata da sola, quindi notifica.
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= 23) {
+            flags |= PendingIntent.FLAG_IMMUTABLE;
+        }
+        PendingIntent pi = PendingIntent.getActivity(ctx, 77, inst, flags);
+        postUpdateNotification("Aggiornamento pronto", "Tocca per installare Sbixify", pi);
+    }
+
+    private void postUpdateNotification(String title, String text, PendingIntent pi) {
+        try {
+            Context ctx = getContext();
+            NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm == null) {
+                return;
+            }
+            Notification.Builder b;
+            if (Build.VERSION.SDK_INT >= 26) {
+                nm.createNotificationChannel(new NotificationChannel("sbixify_update", "Aggiornamenti", NotificationManager.IMPORTANCE_HIGH));
+                b = new Notification.Builder(ctx, "sbixify_update");
+            } else {
+                b = new Notification.Builder(ctx);
+            }
+            b.setSmallIcon(android.R.drawable.stat_sys_download_done)
+                    .setContentTitle(title)
+                    .setContentText(text)
+                    .setAutoCancel(true);
+            if (pi != null) {
+                b.setContentIntent(pi);
+            }
+            nm.notify(7701, b.build());
+        } catch (Exception ignored) {
         }
     }
 
