@@ -1743,6 +1743,90 @@
         }
         #driveModeRotate .lyrics-state { font-size: 15px; }
         #driveModeRotate .lyrics-state i { font-size: 26px; }
+
+        /* ================= ORIZZONTALE (telefono ruotato) =================
+           Stessa identica UI del verticale, che NON viene toccato: tutto quello che cambia sta qui
+           dentro, in un unico blocco @media (orientation: landscape). Pulsanti piu' grandi, senza
+           sfondi in piu', contenuto centrato e righe/griglie che usano la larghezza. Le misure seguono
+           l'ALTEZZA dello schermo (vh) con un minimo, cosi' reggono anche quando l'altezza utile e'
+           poca (barre del browser, schermi bassi). Margini laterali --lx-l/--lx-r: 44px, oppure di
+           piu' dal lato del foro fotocamera (li scrive applyLandscapeInsets in JS).
+           NB: i !important servono solo dove l'elemento ha width/height/padding inline o classi Tailwind. */
+        :root { --lx-l: 44px; --lx-r: 44px; }
+        #lyricsLandBtn { display: none; }
+        @media (orientation: landscape) {
+            /* ---- Home ---- */
+            .home-header { display: flex; align-items: center; gap: 14px; padding: 8px var(--lx-r) 0 var(--lx-l); }
+            .home-header-row { flex: 0 0 auto; height: clamp(44px, 15vh, 56px); gap: 8px; }
+            .menu-icon-btn { width: clamp(44px, 15vh, 56px); height: clamp(44px, 15vh, 56px); }
+            .app-title { position: static; transform: none; font-size: clamp(20px, 8vh, 26px); }
+            .search-pill { flex: 1; min-width: 0; margin-top: 0; padding: clamp(10px, 3.6vh, 16px) 22px; }
+            .search-pill .mag-btn { font-size: clamp(16px, 6vh, 20px); }
+            #searchInput { font-size: clamp(14px, 5vh, 17px) !important; }
+            .quick-eyebrow { padding-left: var(--lx-l); padding-right: var(--lx-r); font-size: clamp(14px, 5vh, 16px); }
+            .home-header + .quick-eyebrow { padding-top: 22px; }
+            .quick-grid, .charts-row { grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 16px 14px; }
+            .quick-grid { padding: 12px var(--lx-r) 18px var(--lx-l); }
+            .charts-row { padding: 10px var(--lx-r) 8px var(--lx-l); }
+            .qcard .name { font-size: clamp(12.5px, 4.6vh, 14px); }
+            .chart-card .chart-card-label { font-size: clamp(12.5px, 4.6vh, 14px); }
+            .tracks-col, .artists-col { display: grid; grid-template-columns: 1fr 1fr; column-gap: 36px; padding: 2px var(--lx-r) 8px var(--lx-l); }
+            .home-track-row { gap: 16px; padding: 0; min-height: clamp(60px, 18vh, 72px); }
+            .home-track-row .track-thumb-wrap { width: clamp(44px, 16vh, 52px) !important; height: clamp(44px, 16vh, 52px) !important; }
+            .home-track-row:not(:last-child)::after { left: calc(clamp(44px, 16vh, 52px) + 16px); }
+            .home-track-meta .t-title { font-size: clamp(14px, 5.2vh, 17px); }
+            .home-track-meta .t-sub { font-size: clamp(12px, 4vh, 13.5px); }
+            .artist-row { padding: 0; min-height: clamp(60px, 18vh, 72px); }
+            .artist-row .artist-thumb { width: clamp(48px, 17vh, 60px); height: clamp(48px, 17vh, 60px); }
+            .artist-row .artist-meta .a-name { font-size: clamp(15px, 5.4vh, 18px); }
+            .artist-row:not(:last-child)::after { left: calc(50px + clamp(48px, 17vh, 60px)); }
+            #homeView { padding-bottom: 128px !important; }
+
+            /* ---- Lista canzoni / risultati ---- */
+            .results-header { padding: 6px var(--lx-r) 6px var(--lx-l); height: auto; min-height: clamp(52px, 17vh, 64px); gap: 16px; }
+            .results-header .back-btn { width: clamp(44px, 15vh, 56px); height: clamp(44px, 15vh, 56px); }
+            .results-header .rt { font-size: clamp(16px, 6vh, 19px); }
+            .results-header .refresh-btn { width: clamp(40px, 13vh, 48px); height: clamp(40px, 13vh, 48px); font-size: clamp(14px, 5vh, 17px); }
+            #trackList { display: grid; grid-template-columns: 1fr 1fr; column-gap: 36px; padding-left: var(--lx-l) !important; padding-right: var(--lx-r) !important; padding-bottom: 128px !important; }
+            #trackList > *:not(.track-row), #trackList > .track-row-artist { grid-column: 1 / -1; }
+            .track-row { padding-top: clamp(8px, 3vh, 12px) !important; padding-bottom: clamp(8px, 3vh, 12px) !important; gap: 16px !important; }
+            .track-row .track-thumb-wrap { width: clamp(44px, 16vh, 52px) !important; height: clamp(44px, 16vh, 52px) !important; }
+            .track-row::after { left: calc(clamp(44px, 16vh, 52px) + 16px); }
+            .track-row .text-sm { font-size: clamp(14px, 5.2vh, 17px); }
+            .track-row .text-xs { font-size: clamp(12px, 4vh, 13.5px); }
+            .track-row.track-row-artist .text-sm { font-size: clamp(15px, 5.4vh, 18px); }
+
+            /* ---- Mini player: stessa forma e struttura del verticale, solo piu' grande ---- */
+            #miniPlayer { left: var(--lx-l) !important; right: var(--lx-r) !important; bottom: calc(12px + env(safe-area-inset-bottom, 0px)) !important; height: clamp(76px, 29vh, 100px) !important; }
+            #miniPlayerDetails { height: clamp(44px, 17vh, 60px) !important; }
+            #miniPlayerImgFrame { width: clamp(44px, 17vh, 60px) !important; height: clamp(44px, 17vh, 60px) !important; }
+            #miniPlayerTitle { font-size: clamp(14px, 5.4vh, 18px) !important; }
+            #miniPlayerChannel { font-size: clamp(12px, 4.2vh, 14px) !important; }
+            #miniPlayPauseBtn { width: clamp(38px, 15vh, 56px) !important; height: clamp(38px, 15vh, 56px) !important; font-size: clamp(15px, 6vh, 22px) !important; }
+            #miniProgressBarArea { font-size: clamp(10px, 3.4vh, 13px) !important; }
+            #miniProgressBarContainer > div, #miniProgressBar { height: clamp(4px, 1.6vh, 6px) !important; }
+
+            /* ---- Now Playing: stessa UI del verticale, centrata, colore Immersive senza foto ---- */
+            html.immersive #immersiveBg { display: none; }
+            #sheetSwipeCloseArea { bottom: 0 !important; }
+            #sheetHeaderDrag, #artworkBand { display: none !important; }
+            #sheetDownloadBtn, #driveModeBtn, #lyricsOffsetBtn { display: none !important; }
+            #sheetContent { padding: calc(env(safe-area-inset-top, 0px) + 6px) var(--lx-r) calc(env(safe-area-inset-bottom, 0px) + 8px) var(--lx-l) !important; justify-content: center !important; }
+            #sheetControls { max-width: min(560px, 100%) !important; }
+            #sheetControls > div:last-child { display: none !important; }   /* slider volume (md:flex): inutile qui */
+            html.immersive #trackInfoBlock { margin-bottom: clamp(6px, 3vh, 14px); }
+            #playerTrackTitle { font-size: clamp(20px, 8vh, 32px) !important; }
+            #playerTrackChannel { font-size: clamp(13px, 4.6vh, 18px) !important; margin-top: 2px !important; }
+            #immersivePlaylistBtn { font-size: clamp(12px, 4vh, 15px) !important; }
+            #currentTime, #durationTime { font-size: clamp(11px, 3.6vh, 14px); }
+            #progressBarContainer { height: clamp(16px, 6vh, 22px) !important; padding: 0 !important; margin-bottom: clamp(6px, 3vh, 16px) !important; }
+            #progressBarContainer > div:first-child, #progressBar { top: 50% !important; transform: translateY(-50%); height: clamp(6px, 2.2vh, 9px) !important; }
+            #ctrlRow { justify-content: space-between !important; gap: 0 !important; margin-bottom: 0 !important; }
+            #repeatBtn, #sleepTimerBtn { width: clamp(48px, 17vh, 64px) !important; height: clamp(48px, 17vh, 64px) !important; font-size: clamp(20px, 7vh, 30px) !important; }
+            #prevBtn, #nextBtn { width: clamp(52px, 19vh, 76px); height: clamp(52px, 19vh, 76px); padding: 0 !important; display: flex; align-items: center; justify-content: center; font-size: clamp(26px, 9.5vh, 40px) !important; }
+            #playPauseBtn { width: clamp(64px, 25vh, 100px) !important; height: clamp(64px, 25vh, 100px) !important; font-size: clamp(26px, 10vh, 42px) !important; }
+            #lyricsLandBtn { display: flex; position: absolute; top: calc(env(safe-area-inset-top, 0px) + 6px); right: var(--lx-r); z-index: 30; width: clamp(48px, 18vh, 60px); height: clamp(48px, 18vh, 60px); align-items: center; justify-content: center; color: #fff; font-size: clamp(22px, 8vh, 30px); background: none; border: 0; padding: 0; }
+        }
     </style>
     <script>
     // App Android (Capacitor): il WebView non mostra la notifica multimediale e a schermo spento
@@ -2046,8 +2130,14 @@
         <button id="driveModeBtn" class="custom-text-accent active:scale-90 transition-transform" title="Modalità auto (schermo intero)">
             <span class="icon-stack"><i class="fa-solid fa-car"></i></span>
         </button>
+        <!-- Solo in ORIZZONTALE (vedi blocco CSS "ORIZZONTALE" in fondo agli stili): al posto del download
+             compare questo pulsante, che apre direttamente la schermata nera dei testi (Modalita' Auto)
+             senza passare dal pannello testi, che resta solo in verticale (swipe da destra a sinistra). -->
+        <button id="lyricsLandBtn" class="active:scale-90 transition-transform" title="Testi a schermo intero" aria-label="Testi a schermo intero">
+            <i class="fa-solid fa-microphone-lines"></i>
+        </button>
 
-        <div class="relative z-20 flex flex-col h-full px-6 pb-8 pt-4 justify-between pointer-events-none">
+        <div id="sheetContent" class="relative z-20 flex flex-col h-full px-6 pb-8 pt-4 justify-between pointer-events-none">
             <div id="sheetHeaderDrag" class="w-full flex flex-col items-center py-2 shrink-0 cursor-pointer pointer-events-auto">
                 <div id="sheetHeaderRow" class="flex items-center justify-between w-full px-1">
                     <button id="closeSheetBtn" class="text-neutral-300 hover:text-white p-2 text-[19px] active:scale-90 transition-transform">
@@ -2105,7 +2195,7 @@
             </div>
 
             <!-- Area Controlli Inferiore -->
-            <div class="w-full max-w-sm mx-auto shrink-0 pointer-events-auto">
+            <div id="sheetControls" class="w-full max-w-sm mx-auto shrink-0 pointer-events-auto">
                 <div id="trackInfoBlock" class="w-full text-left mb-5" style="overflow-x: hidden;">
                     <div id="swipeTitleContainer" class="w-full py-1 cursor-grab active:cursor-grabbing select-none" style="touch-action: none;">
                         <div class="marquee-wrapper">
@@ -2140,7 +2230,7 @@
                     </div>
                 </div>
 
-                <div class="flex items-center justify-center gap-5 mb-8">
+                <div id="ctrlRow" class="flex items-center justify-center gap-5 mb-8">
                     <button id="repeatBtn" class="relative text-gray-400 active:scale-90 transition-colors text-[17px]" title="Ripeti">
                         <i class="fa-solid fa-repeat" id="repeatIcon"></i>
                     </button>
@@ -3612,6 +3702,21 @@
         }
         window.addEventListener('resize', () => { try { if (driveModeOpen) setTimeout(applyDriveModeInsets, 300); } catch (e) {} });
 
+        // Margini laterali dell'interfaccia ORIZZONTALE (--lx-l / --lx-r): 44px, oppure di piu' dal lato
+        // dove il foro della fotocamera invade lo schermo (stessa misura nativa usata per la Modalita' Auto).
+        async function applyLandscapeInsets() {
+            const np = nativeHttp();
+            if (!np || !np.getCutoutInsets) return;
+            try {
+                const i = await np.getCutoutInsets();
+                const st = document.documentElement.style;
+                st.setProperty('--lx-l', Math.max((Number(i.left) || 0) + 16, 44) + 'px');
+                st.setProperty('--lx-r', Math.max((Number(i.right) || 0) + 16, 44) + 'px');
+            } catch (e) {}
+        }
+        window.addEventListener('load', () => setTimeout(applyLandscapeInsets, 400));
+        window.addEventListener('resize', () => setTimeout(applyLandscapeInsets, 350));
+
         function nativeLyricsScreen(on) {
             const np = nativeHttp();
             if (!np) return;
@@ -4800,6 +4905,21 @@
                 e.stopPropagation();
                 openDriveMode();
             });
+            // Orizzontale: il pulsante testi apre direttamente la schermata nera (Modalita' Auto). I testi sono
+            // gia' in #lyricsScroll (si caricano ad ogni cambio brano, non serve aprire prima il pannello).
+            document.getElementById('lyricsLandBtn')?.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const sc = document.getElementById('lyricsScroll');
+                if (!sc || sc.children.length === 0) { try { showToast('Nessun brano in riproduzione'); } catch (err) {} return; }
+                openDriveMode();
+            });
+            // Il pannello testi con lo swipe esiste solo in verticale: se si ruota il telefono con il pannello
+            // aperto lo si chiude, cosi' l'orizzontale riparte sempre dalla vista normale.
+            try {
+                window.matchMedia('(orientation: landscape)').addEventListener('change', (e) => {
+                    if (e.matches && lyricsOpen) closeLyricsPanel();
+                });
+            } catch (err) {}
             // Se il sistema fa uscire dal fullscreen senza passare dal nostro tasto/back
             // (es. un gesto Android), chiude comunque la Modalità Auto invece di lasciare
             // l'overlay nero con le barre di sistema che ci si sovrappongono sopra.
@@ -5365,6 +5485,15 @@
             } else requestDriveModeFullscreen();
             hapticFeedback();
             window.history.pushState({ page: 'driveMode' }, 'DriveMode');
+            // Allinea subito la riga attiva al punto del brano (senza aspettare il prossimo tick), e di nuovo
+            // dopo che il layout dell'overlay si e' assestato.
+            try {
+                if (player?.getCurrentTime) {
+                    lyricsActiveIndex = -1;
+                    updateActiveLyricLine(player.getCurrentTime());
+                    setTimeout(() => { try { lyricsActiveIndex = -1; updateActiveLyricLine(player.getCurrentTime()); } catch (e) {} }, 350);
+                }
+            } catch (e) {}
         }
 
         // Vera Fullscreen API: nasconde davvero barra di stato e barra di navigazione
