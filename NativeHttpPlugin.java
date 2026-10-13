@@ -594,6 +594,23 @@ public class NativeHttpPlugin extends Plugin {
         private String artUrl = "";
         private boolean fg = false;
         private MediaInfo current = new MediaInfo();
+        // Cambio brano dal telefono -> "spintarella" di stato per le autoradio (vedi updateSession)
+        private String lastTrackKey = "";
+        private volatile long lastExtSkipAt = 0;
+        private volatile long nudgeUntil = 0;
+        private final android.os.Handler mainHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+        private final Runnable restoreState = new Runnable() {
+            @Override
+            public void run() {
+                synchronized (MediaService.this) {
+                    nudgeUntil = 0;
+                    try {
+                        session.setPlaybackState(buildState(current, false));
+                    } catch (Exception ignored) {
+                    }
+                }
+            }
+        };
 
         static void submit(Context ctx, MediaInfo info) {
             pending = info;
@@ -650,11 +667,13 @@ public class NativeHttpPlugin extends Plugin {
 
                 @Override
                 public void onSkipToNext() {
+                    lastExtSkipAt = android.os.SystemClock.elapsedRealtime();
                     send("next", 0);
                 }
 
                 @Override
                 public void onSkipToPrevious() {
+                    lastExtSkipAt = android.os.SystemClock.elapsedRealtime();
                     send("previous", 0);
                 }
 
@@ -781,15 +800,38 @@ public class NativeHttpPlugin extends Plugin {
             }
             session.setMetadata(mb.build());
 
+            // Alcune autoradio (es. Uconnect) rileggono titolo e artista solo quando cambia lo STATO di
+            // riproduzione (play/pausa), non quando cambiano soltanto i metadati: per questo cambiando brano
+            // dal telefono il titolo restava vecchio finche' non si metteva in pausa. Dopo un cambio brano
+            // partito dal telefono mandiamo quindi un brevissimo PAUSED e poi di nuovo PLAYING (l'audio non
+            // c'entra: e' solo lo stato che la sessione comunica). Se il cambio arriva dai comandi dell'auto
+            // (volante) gia' funziona e non tocchiamo niente.
+            String key = info.title + "|" + info.artist;
+            boolean hadTrack = lastTrackKey.length() > 0;
+            boolean changed = info.title.length() > 0 && !key.equals(lastTrackKey);
+            if (info.title.length() > 0) {
+                lastTrackKey = key;
+            }
+            long now = android.os.SystemClock.elapsedRealtime();
+            boolean fromCar = (now - lastExtSkipAt) < 5000;
+            if (changed && hadTrack && info.playing && !fromCar) {
+                nudgeUntil = now + 600;
+                mainHandler.removeCallbacks(restoreState);
+                mainHandler.postDelayed(restoreState, 600);
+            }
+            session.setPlaybackState(buildState(info, now < nudgeUntil));
+        }
+
+        private PlaybackState buildState(MediaInfo info, boolean forcePaused) {
             long actions = PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PAUSE | PlaybackState.ACTION_PLAY_PAUSE
                     | PlaybackState.ACTION_SKIP_TO_NEXT | PlaybackState.ACTION_SKIP_TO_PREVIOUS
                     | PlaybackState.ACTION_SEEK_TO;
-            PlaybackState ps = new PlaybackState.Builder()
+            boolean playing = info.playing && !forcePaused;
+            return new PlaybackState.Builder()
                     .setActions(actions)
-                    .setState(info.playing ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED,
-                            info.positionMs, info.playing ? 1.0f : 0.0f)
+                    .setState(playing ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED,
+                            info.positionMs, playing ? 1.0f : 0.0f)
                     .build();
-            session.setPlaybackState(ps);
         }
 
         private void ensureArt(final String url) {
@@ -1062,12 +1104,40 @@ public class NativeHttpPlugin extends Plugin {
                     getActivity().setRequestedOrientation(landscape
                             ? ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                             : ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
-                    Window w = getActivity().getWindow();
-                    if (keepOn) {
-                        w.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-                    } else {
-                        w.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-                    }
+                    keepAwakeLyrics = keepOn;
+                    applyKeepAwake();
+                    call.resolve();
+                } catch (Exception e) {
+                    call.reject(String.valueOf(e.getMessage()));
+                }
+            }
+        });
+    }
+
+    // Schermo sempre acceso: due motivi indipendenti (schermata testi / interfaccia orizzontale).
+    // Il flag resta attivo finche' almeno uno dei due lo richiede.
+    private static boolean keepAwakeLyrics = false;
+    private static boolean keepAwakeLandscape = false;
+
+    private void applyKeepAwake() {
+        Window w = getActivity().getWindow();
+        if (keepAwakeLyrics || keepAwakeLandscape) {
+            w.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        } else {
+            w.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        }
+    }
+
+    /** Schermo sempre acceso mentre il telefono e' in orizzontale (lo chiama la pagina al cambio di orientamento). */
+    @PluginMethod
+    public void setKeepAwake(final PluginCall call) {
+        final boolean on = Boolean.TRUE.equals(call.getBoolean("on", false));
+        getActivity().runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    keepAwakeLandscape = on;
+                    applyKeepAwake();
                     call.resolve();
                 } catch (Exception e) {
                     call.reject(String.valueOf(e.getMessage()));

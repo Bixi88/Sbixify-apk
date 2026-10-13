@@ -3741,6 +3741,25 @@
             if (!sc || sc.children.length === 0) { try { showToast('Nessun brano in riproduzione'); } catch (err) {} return; }
             openDriveMode();
         }
+        // Orizzontale: lo schermo resta sempre acceso finche' l'app e' aperta (plugin nativo; nel browser, Wake Lock).
+        function updateKeepAwake() {
+            const land = window.matchMedia('(orientation: landscape)').matches;
+            const np = nativeHttp();
+            if (np && np.setKeepAwake) {
+                try { Promise.resolve(np.setKeepAwake({ on: land })).catch(() => {}); } catch (e) {}
+                return;
+            }
+            try {
+                if (land && 'wakeLock' in navigator && !document.hidden) {
+                    navigator.wakeLock.request('screen').then((l) => { window.__sbxWakeLock = l; }).catch(() => {});
+                } else if (!land && window.__sbxWakeLock) {
+                    window.__sbxWakeLock.release(); window.__sbxWakeLock = null;
+                }
+            } catch (e) {}
+        }
+        try { window.matchMedia('(orientation: landscape)').addEventListener('change', updateKeepAwake); } catch (e) {}
+        document.addEventListener('visibilitychange', () => { if (!document.hidden) updateKeepAwake(); });
+        window.addEventListener('load', () => setTimeout(updateKeepAwake, 600));
         window.addEventListener('load', () => setTimeout(applyLandscapeInsets, 400));
         window.addEventListener('resize', () => setTimeout(applyLandscapeInsets, 350));
 
@@ -4948,7 +4967,10 @@
             // aperto lo si chiude, cosi' l'orizzontale riparte sempre dalla vista normale.
             try {
                 window.matchMedia('(orientation: landscape)').addEventListener('change', (e) => {
-                    if (e.matches && lyricsOpen) closeLyricsPanel();
+                    if (!e.matches) return;
+                    if (lyricsOpen) closeLyricsPanel();
+                    // Ruotando in orizzontale con la Now Playing aperta la si chiude (in orizzontale non c'e').
+                    if (nowPlayingSheet && nowPlayingSheet.classList.contains('expanded')) closeNowPlayingSheet();
                 });
             } catch (err) {}
             // Se il sistema fa uscire dal fullscreen senza passare dal nostro tasto/back
@@ -5152,6 +5174,8 @@
         }, true);
 
         function openNowPlayingSheet() {
+            // In orizzontale la schermata Now Playing non esiste: il mini player (card a destra) ha gia' tutti i comandi.
+            if (window.matchMedia('(orientation: landscape)').matches) return;
             // Riparte sempre dalla posizione reale attuale (utile se arriva subito dopo un
             // trascinamento interrotto a metà), animando da lì fino a completamente aperta.
             const startPercent = getSheetCurrentPercentY();
@@ -5925,7 +5949,7 @@
                     const fadeProgress = Math.min(1, Math.abs(miniCurrentX) / MINI_TEXT_FADE_DISTANCE);
                     miniTextContainer.style.transform = `translate3d(${clampedX}px, 0, 0)`;
                     miniTextContainer.style.opacity = Math.max(0, 1 - fadeProgress);
-                } else if (miniCurrentY < 0) {
+                } else if (miniCurrentY < 0 && !window.matchMedia('(orientation: landscape)').matches) {
                     // Trascinamento verso l'alto: lo sheet segue il dito in tempo reale,
                     // esattamente come già succede in chiusura, invece di apparire di scatto.
                     // Parte sempre dalla posizione reale attuale (miniDragBasePercent), non da 0
