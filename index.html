@@ -1758,12 +1758,15 @@
         @media (orientation: landscape) {
             /* ---- Home ---- */
             .home-header { display: flex; align-items: center; gap: 14px; padding: 8px var(--pane-r) 0 var(--lx-l); }
-            .home-header-row { flex: 0 0 auto; height: clamp(44px, 15vh, 56px); gap: 8px; }
-            .menu-icon-btn { width: clamp(44px, 15vh, 56px); height: clamp(44px, 15vh, 56px); }
+            /* Niente pillola di ricerca in orizzontale: resta solo il titolo, centrato sul pannello sinistro
+               (quindi in linea con la playlist centrale, le griglie hanno gli stessi margini). Il pulsante
+               impostazioni (invisibile) resta a sinistra, quello di aggiornamento a destra. */
+            .home-header { gap: 0; }
+            .home-header-row { flex: 1; justify-content: center; height: clamp(44px, 15vh, 56px); }
+            .menu-icon-btn { position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: clamp(44px, 15vh, 56px); height: clamp(44px, 15vh, 56px); }
+            .update-btn { position: absolute; right: 0; top: 50%; transform: translateY(-50%); margin-left: 0; }
             .app-title { position: static; transform: none; font-size: clamp(20px, 8vh, 26px); }
-            .search-pill { flex: 1; min-width: 0; margin-top: 0; padding: clamp(10px, 3.6vh, 16px) 22px; }
-            .search-pill .mag-btn { font-size: clamp(16px, 6vh, 20px); }
-            #searchInput { font-size: clamp(14px, 5vh, 17px) !important; }
+            .search-pill, #searchSuggestions, #pwaInstallBtn { display: none !important; }
             .quick-eyebrow { padding-left: var(--lx-l); padding-right: var(--pane-r); font-size: clamp(14px, 5vh, 16px); }
             .home-header + .quick-eyebrow { padding-top: 22px; }
             .quick-grid, .charts-row { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 16px 14px; }
@@ -2144,8 +2147,8 @@
         </button>
         <!-- Pulsante "Modalità auto": gemello di #lyricsOffsetBtn ma a destra, stessa
              visibilità (solo quando i testi sono aperti). Vedi openDriveMode() in JS. -->
-        <button id="driveModeBtn" class="custom-text-accent active:scale-90 transition-transform" title="Modalità auto (schermo intero)">
-            <span class="icon-stack"><i class="fa-solid fa-car"></i></span>
+        <button id="driveModeBtn" class="custom-text-accent active:scale-90 transition-transform" title="Testi a schermo intero">
+            <span class="icon-stack"><i class="fa-solid fa-microphone-lines"></i></span>
         </button>
         <!-- Solo in ORIZZONTALE (vedi blocco CSS "ORIZZONTALE" in fondo agli stili): al posto del download
              compare questo pulsante, che apre direttamente la schermata nera dei testi (Modalita' Auto)
