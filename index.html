@@ -3014,6 +3014,16 @@
                     name: 'ANDROID_VR', id: '28', version: '1.65.10',
                     ua: 'com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
                     ctx: { clientName: 'ANDROID_VR', clientVersion: '1.65.10', osName: 'Android', osVersion: '12L', deviceMake: 'Oculus', deviceModel: 'Quest 3', androidSdkVersion: 32 }
+                },
+                // Terzo tentativo (secondario): client incorporato nei siti, lo stesso che Stash prova per primo.
+                // Viene usato solo se VISIONOS e ANDROID_VR non hanno dato nessuno stream.
+                {
+                    name: 'WEB_EMBEDDED', id: '56', version: '1.20260213.01.00',
+                    ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0',
+                    url: 'https://www.youtube.com/youtubei/v1/player?prettyPrint=false',
+                    origin: 'https://www.youtube.com',
+                    thirdParty: { embedUrl: 'https://www.youtube.com/' },
+                    ctx: { clientName: 'WEB_EMBEDDED_PLAYER', clientVersion: '1.20260213.01.00' }
                 }
             ],
             NOISE: new Set(['official','video','audio','lyrics','lyric','testo','ufficiale','clip','hd','4k','remastered','visualizer','visual','prod','feat','ft','topic','vevo','music','full','version','con']),
@@ -3055,28 +3065,30 @@
             async tryClients(id, fmt, vd, attempts) {
                 for (const client of this.CLIENTS) {
                     try {
-                        const r = await this.http(this.PLAYER_URL, 'POST', {
+                        const r = await this.http(client.url || this.PLAYER_URL, 'POST', {
                             'Content-Type': 'application/json',
                             'User-Agent': client.ua,
                             'X-Goog-Api-Format-Version': '1',
                             'X-YouTube-Client-Name': client.id,
                             'X-YouTube-Client-Version': client.version,
-                            'X-Origin': this.ORIGIN,
-                            'Referer': this.ORIGIN + '/',
+                            'X-Origin': client.origin || this.ORIGIN,
+                            'Referer': (client.origin || this.ORIGIN) + '/',
                             'X-Goog-Visitor-Id': vd
                         }, {
-                            context: { client: Object.assign({}, client.ctx, { hl: 'it', gl: 'IT', visitorData: vd }), user: {} },
+                            context: Object.assign({ client: Object.assign({}, client.ctx, { hl: 'it', gl: 'IT', visitorData: vd }), user: {} }, client.thirdParty ? { thirdParty: client.thirdParty } : {}),
                             videoId: id, contentCheckOk: true, racyCheckOk: true
                         });
                         const resp = JSON.parse(r.data);
                         const status = resp && resp.playabilityStatus && resp.playabilityStatus.status;
                         const f = status === 'OK' ? this.pickAudio(resp, fmt) : null;
-                        attempts.push({ id: id, client: client.name, status: status, reason: (resp.playabilityStatus && resp.playabilityStatus.reason) || null, found: !!f });
+                        attempts.push({ id: id, client: client.name, status: status, reason: (resp.playabilityStatus && resp.playabilityStatus.reason) || null, found: !!f,
+                            len: Number(resp && resp.videoDetails && resp.videoDetails.lengthSeconds) || 0 });
                         if (f) {
                             return {
                                 client: client.name, ua: client.ua, url: f.url, itag: f.itag,
                                 mimeType: f.mimeType.split(';')[0], bitrate: f.bitrate,
-                                expiresIn: Number((resp.streamingData && resp.streamingData.expiresInSeconds) || 21000)
+                                expiresIn: Number((resp.streamingData && resp.streamingData.expiresInSeconds) || 21000),
+                                len: Number(resp && resp.videoDetails && resp.videoDetails.lengthSeconds) || 0
                             };
                         }
                     } catch (e) {
@@ -3129,8 +3141,53 @@
                     const id = it && it.playlistItemData && it.playlistItemData.videoId;
                     const col = it && it.flexColumns && it.flexColumns[0] && it.flexColumns[0].musicResponsiveListItemFlexColumnRenderer;
                     const title = col && col.text && col.text.runs && col.text.runs[0] && col.text.runs[0].text;
-                    if (id && title) out.push({ id: id, title: title });
+                    const col2 = it && it.flexColumns && it.flexColumns[1] && it.flexColumns[1].musicResponsiveListItemFlexColumnRenderer;
+                    const runs2 = (col2 && col2.text && col2.text.runs) || [];
+                    let dur = 0;
+                    for (const rn of runs2) { const d2 = NR.parseDur(rn && rn.text); if (d2) dur = d2; }
+                    if (id && title) out.push({ id: id, title: title, dur: dur });
                     if (out.length >= 4) break;
+                }
+                return out;
+            },
+
+            // ---- Ripieghi secondari (ispirati a Stash): usati solo quando il percorso normale non da' nulla ----
+            parseDur(s) {
+                const m = /^(?:(\d{1,2}):)?(\d{1,2}):(\d{2})$/.exec(String(s || '').trim());
+                if (!m) return 0;
+                return (Number(m[1] || 0) * 3600) + (Number(m[2]) * 60) + Number(m[3]);
+            },
+
+            // true se le durate combaciano (±15 s o ±8%) oppure se una delle due non si conosce
+            durationOk(orig, cand) {
+                if (!orig || !cand) return true;
+                return Math.abs(orig - cand) <= Math.max(15, orig * 0.08);
+            },
+
+            // scarta clip brevissime e video lunghissimi (mix, concerti interi)
+            sanityDur(sec) {
+                return !sec || (sec >= 30 && sec <= 1200);
+            },
+
+            // Seconda ricerca (video normali di YouTube): come il ripiego ytsearch di Stash quando la ricerca musicale non basta
+            async searchVideosFallback(query, vd) {
+                const r = await this.http('https://www.youtube.com/youtubei/v1/search?prettyPrint=false', 'POST', {
+                    'Content-Type': 'application/json', 'User-Agent': this.UA_WEB,
+                    'X-Origin': 'https://www.youtube.com', 'Referer': 'https://www.youtube.com/', 'X-Goog-Visitor-Id': vd
+                }, {
+                    context: { client: { clientName: 'WEB', clientVersion: '2.20260213.01.00', hl: 'it', gl: 'IT', visitorData: vd }, user: {} },
+                    query: query, params: 'EgIQAQ%3D%3D'
+                });
+                const j = JSON.parse(r.data);
+                const items = [];
+                this.collect(j, 'videoRenderer', items);
+                const out = [];
+                for (const it of items) {
+                    const id = it && it.videoId;
+                    const title = it && it.title && it.title.runs && it.title.runs[0] && it.title.runs[0].text;
+                    const dur = this.parseDur(it && it.lengthText && it.lengthText.simpleText);
+                    if (id && title) out.push({ id: id, title: title, dur: dur });
+                    if (out.length >= 5) break;
                 }
                 return out;
             },
@@ -3150,14 +3207,35 @@
                         const q = (meta.title + ' ' + (meta.artist || '')).trim();
                         const cands = await this.searchSongs(q, vd);
                         let tried = 0;
+                        const origLen = (attempts.find((a) => a.len) || {}).len || 0;
                         for (const c of cands) {
                             if (c.id === id || !this.titleMatches(meta.title, c.title)) continue;
+                            if (c.dur && !this.durationOk(origLen, c.dur)) continue;
                             if (++tried > 2) break;
                             const d = await this.tryClients(c.id, fmt, vd, attempts);
-                            if (d) { data = Object.assign({}, d, { viaSearch: true, altId: c.id, altTitle: c.title }); break; }
+                            if (d && this.durationOk(origLen, d.len)) { data = Object.assign({}, d, { viaSearch: true, altId: c.id, altTitle: c.title }); break; }
                         }
                     } catch (e) {
                         attempts.push({ search: 'errore', error: String((e && e.message) || e) });
+                    }
+                }
+
+                // Secondo ripiego (solo se il primo non ha trovato nulla): ricerca video normale + controllo durata
+                if (!data && meta && meta.title && attempts.some((a) => a.status === 'UNPLAYABLE' || a.status === 'LOGIN_REQUIRED')) {
+                    try {
+                        const q2 = (meta.title + ' ' + (meta.artist || '')).trim();
+                        const cands2 = await this.searchVideosFallback(q2, vd);
+                        const origLen2 = (attempts.find((a) => a.len) || {}).len || 0;
+                        let tried2 = 0;
+                        for (const c of cands2) {
+                            if (c.id === id || !this.titleMatches(meta.title, c.title)) continue;
+                            if (c.dur && (!this.sanityDur(c.dur) || !this.durationOk(origLen2, c.dur))) continue;
+                            if (++tried2 > 2) break;
+                            const d = await this.tryClients(c.id, fmt, vd, attempts);
+                            if (d && this.durationOk(origLen2, d.len)) { data = Object.assign({}, d, { viaSearch: true, altId: c.id, altTitle: c.title }); break; }
+                        }
+                    } catch (e) {
+                        attempts.push({ search: 'errore2', error: String((e && e.message) || e) });
                     }
                 }
 
