@@ -614,6 +614,8 @@ public class NativeHttpPlugin extends Plugin {
         static volatile MediaInfo pending;
 
         private MediaSession session;
+        // Cuffie/auricolari Bluetooth o cavo che si scollegano: Android manda BECOMING_NOISY e noi mettiamo in pausa
+        private BroadcastReceiver noisyReceiver;
         private PowerManager.WakeLock wakeLock;
         private WifiManager.WifiLock wifiLock;
         private Bitmap art;
@@ -709,6 +711,22 @@ public class NativeHttpPlugin extends Plugin {
                 }
             });
             session.setActive(true);
+            // Se le cuffie si spengono / si scollegano, la musica non deve passare all'altoparlante del telefono:
+            // pausa. Usiamo "pause" (non "ext_pause") cosi' non vale la regola che ignora le pause subito
+            // dopo un cambio brano. La pausa e' idempotente: se e' gia' ferma non succede nulla.
+            noisyReceiver = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    if (intent != null && android.media.AudioManager.ACTION_AUDIO_BECOMING_NOISY.equals(intent.getAction())) {
+                        send("pause", 0);
+                    }
+                }
+            };
+            try {
+                registerReceiver(noisyReceiver, new IntentFilter(android.media.AudioManager.ACTION_AUDIO_BECOMING_NOISY));
+            } catch (Exception ignored) {
+                noisyReceiver = null;
+            }
             PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
             wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "sbixify:playback");
             wakeLock.setReferenceCounted(false);
@@ -758,6 +776,13 @@ public class NativeHttpPlugin extends Plugin {
         @Override
         public void onDestroy() {
             instance = null;
+            try {
+                if (noisyReceiver != null) {
+                    unregisterReceiver(noisyReceiver);
+                    noisyReceiver = null;
+                }
+            } catch (Exception ignored) {
+            }
             try {
                 if (wakeLock != null && wakeLock.isHeld()) {
                     wakeLock.release();
