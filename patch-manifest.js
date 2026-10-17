@@ -41,6 +41,22 @@ if (!x.includes('android.intent.action.SEND')) {
   changed = true;
 }
 
+// App musicale riconoscibile dal sistema (elenco "Riproduci musica" delle routine Samsung, auto, assistenti)
+if (!x.includes('BrowserStub')) {
+  x = x.replace('</application>', () =>
+    '    <service android:name="it.sbixify.app.BrowserStub" android:exported="true">\n' +
+    '        <intent-filter>\n' +
+    '            <action android:name="android.media.browse.MediaBrowserService" />\n' +
+    '        </intent-filter>\n' +
+    '    </service>\n' +
+    '    <receiver android:name="it.sbixify.app.MediaButtonReceiver" android:exported="true">\n' +
+    '        <intent-filter>\n' +
+    '            <action android:name="android.intent.action.MEDIA_BUTTON" />\n' +
+    '        </intent-filter>\n' +
+    '    </receiver>\n    </application>');
+  changed = true;
+}
+
 if (changed) {
   fs.writeFileSync(p, x);
   console.log('AndroidManifest.xml aggiornato');
