@@ -106,6 +106,12 @@ public class NativeHttpPlugin extends Plugin {
     @Override
     public void load() {
         instanceRef = this;
+        // Riaperta dal tasto play dell'auto: dice alla pagina di far partire il brano
+        long cold = MediaService.coldPlayAt;
+        if (cold != 0 && android.os.SystemClock.elapsedRealtime() - cold < 60000L) {
+            MediaService.coldPlayAt = 0;
+            emit("coldplay", 0);
+        }
         try {
             // Avvio da "Condividi" con l'app chiusa: l'intent iniziale contiene il testo condiviso.
             // Se l'app e' stata riaperta dalla lista delle app recenti, quell'intent e' vecchio: si ignora.
@@ -553,6 +559,26 @@ public class NativeHttpPlugin extends Plugin {
         long durationMs = 0;
     }
 
+    /** "Appari sopra altre app": serve ad Android per lasciare riaprire Sbixify dal tasto play dell'auto. */
+    @PluginMethod
+    public void getOverlayStatus(PluginCall call) {
+        JSObject r = new JSObject();
+        r.put("granted", Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(getContext()));
+        call.resolve(r);
+    }
+
+    @PluginMethod
+    public void requestOverlay(PluginCall call) {
+        try {
+            Intent i = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + getContext().getPackageName()));
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(i);
+            call.resolve();
+        } catch (Exception e) {
+            call.reject(String.valueOf(e.getMessage()));
+        }
+    }
+
     @PluginMethod
     public void setMediaInfo(PluginCall call) {
         try {
@@ -609,6 +635,11 @@ public class NativeHttpPlugin extends Plugin {
         static final String ACT_NEXT = "it.sbixify.app.NEXT";
         static final String ACT_PREV = "it.sbixify.app.PREV";
         static final String ACT_STOP = "it.sbixify.app.STOP";
+        // Tasto play dall'auto / Bluetooth con l'app chiusa: parte il servizio e riapre l'app
+        static final String ACT_COLD = "it.sbixify.app.COLD";
+        static volatile long coldPlayAt = 0;
+        // Con il telefono bloccato l'app riaperta dal play dell'auto deve potersi mostrare sopra il blocco schermo
+        static volatile boolean showOverLock = false;
 
         static volatile MediaService instance;
         static volatile MediaInfo pending;
@@ -711,6 +742,15 @@ public class NativeHttpPlugin extends Plugin {
                 }
             });
             session.setActive(true);
+            // Dopo che il servizio e' stato chiuso, Android ricorda questo ricevitore e gli manda il tasto play
+            // dell'auto / delle cuffie: e' cio' che permette di far partire la musica "da zero" senza toccare il telefono
+            try {
+                Intent mb = new Intent(Intent.ACTION_MEDIA_BUTTON);
+                mb.setComponent(new android.content.ComponentName(this, MediaButtonReceiver.class));
+                session.setMediaButtonReceiver(PendingIntent.getBroadcast(this, 0, mb,
+                        Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0));
+            } catch (Exception ignored) {
+            }
             // Se le cuffie si spengono / si scollegano, la musica non deve passare all'altoparlante del telefono:
             // pausa. Usiamo "pause" (non "ext_pause") cosi' non vale la regola che ignora le pause subito
             // dopo un cambio brano. La pausa e' idempotente: se e' gia' ferma non succede nulla.
@@ -746,6 +786,34 @@ public class NativeHttpPlugin extends Plugin {
             String action = intent != null ? intent.getAction() : null;
             if (ACT_STOP.equals(action)) {
                 stopSelf();
+                return START_NOT_STICKY;
+            }
+            if (ACT_COLD.equals(action)) {
+                // App chiusa e play premuto dall'auto: tiene vivo il processo e riapre l'app, che poi fa partire il brano
+                coldPlayAt = android.os.SystemClock.elapsedRealtime();
+                showOverLock = true;
+                try {
+                    startFg(buildNotification(current));
+                } catch (Exception ignored) {
+                }
+                try {
+                    Intent open = new Intent(this, MainActivity.class);
+                    open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                    startActivity(open);
+                } catch (Exception ignored) {
+                    // senza il permesso "Appari sopra altre app" Android puo' rifiutare
+                }
+                mainHandler.postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        synchronized (MediaService.this) {
+                            if (current != null && !current.playing && fg) {
+                                stopForeground(false);
+                                fg = false;
+                            }
+                        }
+                    }
+                }, 25000);
                 return START_NOT_STICKY;
             }
             if (ACT_PLAY.equals(action)) {

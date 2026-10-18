@@ -3,6 +3,7 @@ package it.sbixify.app;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.os.Build;
 import android.view.KeyEvent;
 
 /**
@@ -43,10 +44,15 @@ public class MediaButtonReceiver extends BroadcastReceiver {
                 Intent i = new Intent(ctx, NativeHttpPlugin.MediaService.class);
                 i.setAction(act);
                 ctx.startService(i);
-            } else {
-                Intent i = new Intent(ctx, MainActivity.class);
-                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-                ctx.startActivity(i);
+            } else if (NativeHttpPlugin.MediaService.ACT_PLAY.equals(act)) {
+                // App chiusa: il servizio in primo piano (consentito dal tasto multimediale) riapre l'app e fa partire la musica
+                Intent i = new Intent(ctx, NativeHttpPlugin.MediaService.class);
+                i.setAction(NativeHttpPlugin.MediaService.ACT_COLD);
+                if (Build.VERSION.SDK_INT >= 26) {
+                    ctx.startForegroundService(i);
+                } else {
+                    ctx.startService(i);
+                }
             }
         } catch (Exception ignored) {
             // app in background: Android puo' rifiutare l'avvio

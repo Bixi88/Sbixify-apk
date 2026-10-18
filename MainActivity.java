@@ -6,6 +6,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
+import android.view.WindowManager;
 import android.webkit.ValueCallback;
 import android.webkit.WebView;
 
@@ -49,6 +50,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(NativeHttpPlugin.class);
         super.onCreate(savedInstanceState);
+        applyShowOverLock();
 
         // Il processo che disegna la pagina (e riproduce l'audio) resta ad alta priorita' anche quando
         // l'app non e' visibile: meno rischio che Android lo fermi o lo "congeli" a schermo spento.
@@ -84,6 +86,55 @@ public class MainActivity extends BridgeActivity {
                         });
             }
         });
+    }
+
+    /**
+     * Riaperta dal tasto play dell'auto a telefono bloccato: si mostra sopra il blocco schermo (senza
+     * accendere lo schermo) per far partire la musica. Dopo 30 secondi, o quando l'app va in secondo piano,
+     * il blocco schermo torna a coprirla.
+     */
+    private void applyShowOverLock() {
+        if (!NativeHttpPlugin.MediaService.showOverLock) {
+            return;
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= 27) {
+                setShowWhenLocked(true);
+            } else {
+                getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED);
+            }
+            handler.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    clearShowOverLock();
+                }
+            }, 30000);
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void clearShowOverLock() {
+        NativeHttpPlugin.MediaService.showOverLock = false;
+        try {
+            if (Build.VERSION.SDK_INT >= 27) {
+                setShowWhenLocked(false);
+            } else {
+                getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED);
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        applyShowOverLock();
+    }
+
+    @Override
+    public void onStop() {
+        super.onStop();
+        clearShowOverLock();
     }
 
     @Override

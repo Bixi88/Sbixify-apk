@@ -1930,6 +1930,11 @@
                 try {
                     Promise.resolve(np.pollActions()).then(function (r) {
                         ((r && r.actions) || []).forEach(function (e) {
+                            // App riaperta dal tasto play dell'auto: fa partire l'ultimo brano
+                            if (e.action === 'coldplay') {
+                                try { if (window.__sbxColdPlay) window.__sbxColdPlay(); } catch (err) {}
+                                return;
+                            }
                             var name = map[e.action];
                             var h = name && handlers[name];
                             if (h) { try { h({ action: name, seekTime: e.position, external: String(e.action).indexOf('ext_') === 0 }); } catch (err) {} }
@@ -2390,6 +2395,9 @@
                     <button id="batteryExemptBtn" type="button" class="font-bold text-xs px-4 py-2 rounded-xl active:scale-95 transition-all custom-bg-accent" style="color:#1a1305;">Escludi dal risparmio batteria</button>
                     <button id="audioLogBtn" type="button" class="font-semibold text-xs px-4 py-2 rounded-xl active:scale-95 transition-all border border-white/10 custom-text-muted">Copia diagnostica</button>
                 </div>
+                <p class="text-[10px] custom-text-muted leading-snug mt-3 mb-2">Per far partire la musica dal tasto play dell'auto (Bluetooth) anche con l'app chiusa, consenti &quot;Appari sopra altre app&quot;.</p>
+                <button id="overlayBtn" type="button" class="font-bold text-xs px-4 py-2 rounded-xl active:scale-95 transition-all custom-bg-accent" style="color:#1a1305;">Consenti avvio dall'auto</button>
+                <p id="overlayMsg" class="text-[10px] mt-2 custom-text-muted leading-snug"></p>
                 <p id="bgAudioMsg" class="text-[10px] mt-2 custom-text-muted leading-snug"></p>
             </div>
 
@@ -10641,6 +10649,45 @@
             document.getElementById('apiErrorBadge')?.classList.remove('hidden');
             document.getElementById('modalApiBadgeError').classList.remove('hidden');
         }
+
+        // --- Play dall'auto con l'app chiusa ---
+        // L'app viene riaperta da Android: appena player e ultimo brano sono pronti si preme play.
+        window.__sbxColdPlay = function () {
+            var tries = 0, skip = 0;
+            var t = setInterval(function () {
+                tries++;
+                try {
+                    if (appState.isPlaying) { clearInterval(t); return; }
+                    if (skip > 0) { skip--; return; }
+                    if (player && nowPlayingIndex !== -1 && !nowPlayingUnavailable) { togglePlay(); skip = 3; }
+                } catch (e) {}
+                if (tries > 50) clearInterval(t);
+            }, 500);
+        };
+
+        window.addEventListener('load', function () {
+            var btn = document.getElementById('overlayBtn');
+            var msg = document.getElementById('overlayMsg');
+            var np = nativeHttp();
+            if (!btn || !msg) return;
+            if (!np || !np.requestOverlay) { btn.style.display = 'none'; return; }
+            function refresh() {
+                try {
+                    Promise.resolve(np.getOverlayStatus()).then(function (r) {
+                        if (r && r.granted) msg.textContent = 'Consentito: il tasto play dell\'auto può riaprire Sbixify.';
+                    }).catch(function () {});
+                } catch (e) {}
+            }
+            refresh();
+            btn.addEventListener('click', function () {
+                try {
+                    Promise.resolve(np.requestOverlay()).then(function () {
+                        msg.textContent = 'Nella schermata di Android attiva \"Consenti visualizzazione sopra altre app\".';
+                    }).catch(function (e) { msg.textContent = 'Non riesco ad aprire la schermata: ' + ((e && e.message) || e); });
+                } catch (e) {}
+            });
+            document.addEventListener('visibilitychange', function () { if (!document.hidden) refresh(); });
+        });
     </script>
 </body>
 </html>
