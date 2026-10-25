@@ -1843,6 +1843,54 @@
             #playPauseBtn { width: clamp(64px, 25vh, 100px) !important; height: clamp(64px, 25vh, 100px) !important; font-size: clamp(26px, 10vh, 42px) !important; }
             #lyricsLandBtn { display: flex; position: absolute; top: calc(env(safe-area-inset-top, 0px) + 6px); right: var(--lx-r); z-index: 30; width: clamp(48px, 18vh, 60px); height: clamp(48px, 18vh, 60px); align-items: center; justify-content: center; color: #fff; font-size: clamp(22px, 8vh, 30px); background: none; border: 0; padding: 0; }
         }
+    
+        /* ============ PLAYLIST PERSONALI + MENU "SALVATO IN" (struttura copiata da Spotify, colori/stile Sbixify) ============ */
+        .sbx-add-btn { flex:0 0 auto; width:30px; height:30px; margin-left:4px; border-radius:50%; border:1.6px solid var(--text-muted); color:var(--text-muted); background:transparent; display:flex; align-items:center; justify-content:center; font-size:13px; transition:transform .15s ease, background-color .2s ease, border-color .2s ease, color .2s ease; -webkit-tap-highlight-color:transparent; }
+        .sbx-add-btn:active { transform:scale(.88); }
+        .sbx-add-btn.saved { background:var(--accent); border-color:var(--accent); color:#000; }
+        .sbx-save-sheet { height:min(86vh, 760px); display:flex; flex-direction:column; padding-left:0; padding-right:0; position:relative; }
+        .sbx-save-sheet .sleep-timer-sheet-handle { margin-bottom:10px; }
+        .sbx-save-top { display:flex; justify-content:space-between; align-items:center; padding:4px 22px 0; }
+        .sbx-save-top button { font-size:15px; font-weight:700; color:var(--text-main); padding:8px 0; background:none; border:0; }
+        .sbx-save-head { display:flex; justify-content:space-between; align-items:center; padding:14px 22px 10px; }
+        .sbx-save-head h3 { font-size:22px; font-weight:800; color:var(--text-main); margin:0; }
+        .sbx-save-head button { font-size:14px; font-weight:800; color:var(--accent); background:none; border:0; padding:6px 0; }
+        .sbx-save-tools { display:flex; gap:10px; padding:6px 22px 10px; }
+        .sbx-save-search { flex:1; display:flex; align-items:center; gap:10px; background:var(--bg-input); border-radius:10px; padding:0 12px; height:40px; color:var(--text-muted); }
+        .sbx-save-search input { flex:1; min-width:0; background:transparent; border:0; outline:0; color:var(--text-main); font-size:14px; font-weight:700; }
+        .sbx-save-search input::placeholder { color:var(--text-main); opacity:.9; }
+        .sbx-save-sort { height:40px; padding:0 16px; border-radius:10px; border:0; background:var(--bg-input); color:var(--text-main); font-size:14px; font-weight:800; }
+        .sbx-save-list { flex:1; overflow-y:auto; padding:0 22px 96px; -webkit-overflow-scrolling:touch; }
+        .sbx-pl-row { display:flex; align-items:center; gap:14px; padding:9px 0; cursor:pointer; -webkit-tap-highlight-color:transparent; }
+        .sbx-pl-row:active { opacity:.75; }
+        .sbx-pl-cover { width:50px; height:50px; border-radius:50%; overflow:hidden; flex:0 0 auto; background:var(--bg-input); display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr; color:var(--text-muted); }
+        .sbx-pl-cover.single { display:flex; align-items:center; justify-content:center; font-size:18px; }
+        .sbx-pl-cover.liked { background:linear-gradient(135deg, var(--accent), #7a3bff); color:#fff; }
+        .sbx-pl-cover img { width:100%; height:100%; object-fit:cover; display:block; }
+        .sbx-pl-meta { flex:1; min-width:0; }
+        .sbx-pl-name { font-size:16px; font-weight:700; color:var(--text-main); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .sbx-pl-sub { font-size:13px; color:var(--text-muted); margin-top:3px; font-weight:600; }
+        .sbx-pl-tick { flex:0 0 auto; width:28px; height:28px; border-radius:50%; border:1.6px solid var(--text-muted); color:var(--text-muted); display:flex; align-items:center; justify-content:center; font-size:13px; transition:background-color .2s ease, transform .15s ease; }
+        .sbx-pl-row.on .sbx-pl-tick { background:var(--accent); border-color:var(--accent); color:#000; }
+        .sbx-pl-row.on .sbx-pl-tick i::before { content:"\f00c"; }
+        .sbx-save-fab { position:absolute; left:50%; bottom:calc(22px + env(safe-area-inset-bottom, 0px)); transform:translateX(-50%); min-width:116px; height:50px; border-radius:999px; border:0; background:var(--accent); color:#000; font-size:16px; font-weight:800; box-shadow:0 10px 24px -8px rgba(0,0,0,.6); }
+        .sbx-save-fab:active { transform:translateX(-50%) scale(.96); }
+        .sbx-sort-pop { position:absolute; right:22px; top:0; z-index:5; background:var(--bg-input); border-radius:12px; padding:6px; box-shadow:0 14px 30px -10px rgba(0,0,0,.7); display:none; }
+        .sbx-sort-pop.open { display:block; }
+        .sbx-sort-pop button { display:block; width:100%; text-align:left; padding:11px 14px; font-size:14px; font-weight:700; color:var(--text-main); background:none; border:0; border-radius:8px; white-space:nowrap; }
+        .sbx-sort-pop button.sel { color:var(--accent); }
+        .sbx-new-input { width:100%; background:var(--bg-input); border:0; outline:0; border-radius:12px; color:var(--text-main); font-size:17px; font-weight:700; padding:14px 16px; margin:6px 0 16px; }
+        .sbx-new-actions { display:flex; gap:10px; }
+        .sbx-new-actions button { flex:1; height:46px; border-radius:999px; border:0; font-size:15px; font-weight:800; }
+        .sbx-new-actions .ok { background:var(--accent); color:#000; }
+        .sbx-new-actions .no { background:var(--bg-input); color:var(--text-main); }
+        .sbx-sp-chip { display:inline-flex; align-items:center; gap:7px; padding:7px 13px; border-radius:999px; background:var(--bg-input); color:var(--text-main); font-size:12.5px; font-weight:800; border:0; }
+        .sbx-sp-chip i { color:var(--accent); }
+        .sbx-pl-head { display:flex; align-items:center; justify-content:space-between; padding-right:24px; }
+        .sbx-pl-head .quick-eyebrow { flex:1; }
+        #myPlaylistsRow .chart-card .chart-card-thumb { display:flex; align-items:center; justify-content:center; font-size:26px; color:var(--text-muted); overflow:hidden; }
+        #myPlaylistsRow .chart-card .sbx-sp-badge { position:absolute; right:6%; bottom:26%; font-size:15px; color:var(--accent); }
+        #myPlaylistsRow .chart-card { position:relative; }
     </style>
     <script>
     // App Android (Capacitor): il WebView non mostra la notifica multimediale e a schermo spento
@@ -2013,6 +2061,14 @@
                     <div id="recentTracksSection" class="hidden">
                         <div class="quick-eyebrow">Canzoni recenti</div>
                         <div id="recentTracksCol" class="tracks-col"></div>
+                    </div>
+
+                    <!-- Le tue playlist (create nell'app + quelle del tuo account Spotify, dopo il login) -->
+                    <div id="myPlaylistsSection">
+                        <div class="sbx-pl-head">
+                            <div class="quick-eyebrow">Le tue playlist</div>
+                        </div>
+                        <div id="myPlaylistsRow" class="charts-row"></div>
                     </div>
 
                     <!-- Classifiche YouTube Music + top artisti (IT e globale) -->
@@ -2313,6 +2369,47 @@
             </div>
             <div class="sleep-timer-sheet-divider"></div>
             <div id="correctSongResults"></div>
+        </div>
+    </div>
+
+
+    <!-- Menu "Salvato in": si apre dal "+" di ogni canzone (struttura del menu di Spotify: Annulla/Fatto, Nuova
+         playlist, Trova playlist + Ordina, righe con cerchio +/spunta). Stessa sheet (overlay, animazione,
+         sfondo) di timer/correggi canzone, con i colori e lo stile di Sbixify. -->
+    <div id="saveSheetModal" class="sleep-timer-modal">
+        <div class="sleep-timer-sheet sbx-save-sheet">
+            <div class="sleep-timer-sheet-handle"></div>
+            <div class="sbx-save-top">
+                <button id="saveCancelBtn">Annulla</button>
+                <button id="saveDoneTopBtn">Fatto</button>
+            </div>
+            <div class="sbx-save-head">
+                <h3>Salvato in</h3>
+                <button id="saveNewBtn">Nuova playlist</button>
+            </div>
+            <div class="sbx-save-tools" style="position:relative;">
+                <div class="sbx-save-search"><i class="fa-solid fa-magnifying-glass"></i><input id="saveSearchInput" type="text" placeholder="Trova playlist" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
+                <button id="saveSortBtn" class="sbx-save-sort">Ordina</button>
+                <div id="saveSortPop" class="sbx-sort-pop" style="top:46px;">
+                    <button data-sort="recent" class="sel">Aggiunte di recente</button>
+                    <button data-sort="alpha">Ordine alfabetico</button>
+                </div>
+            </div>
+            <div id="saveList" class="sbx-save-list"></div>
+            <button id="saveDoneFab" class="sbx-save-fab">Fatto</button>
+        </div>
+    </div>
+
+    <!-- Nuova playlist (apre sopra il menu "Salvato in") -->
+    <div id="saveNewModal" class="sleep-timer-modal" style="z-index:120;">
+        <div class="sleep-timer-sheet">
+            <div class="sleep-timer-sheet-handle"></div>
+            <h3 class="sleep-timer-sheet-title">Dai un nome alla playlist</h3>
+            <input id="saveNewInput" class="sbx-new-input" type="text" maxlength="60" placeholder="La mia playlist" autocomplete="off">
+            <div class="sbx-new-actions">
+                <button id="saveNewCancel" class="no">Annulla</button>
+                <button id="saveNewOk" class="ok">Crea</button>
+            </div>
         </div>
     </div>
 
@@ -4470,6 +4567,7 @@
                 }
                 // Modal "Correggi canzone": stessa priorità del timer, stesso motivo (può
                 // stare sopra la Now Playing o sopra la lista canzoni, va chiusa da sola).
+                if (typeof sbxCloseSaveSheet === 'function' && sbxCloseSaveSheet()) handled = true;
                 const correctSongModalEl = document.getElementById('correctSongModal');
                 if (correctSongModalEl && correctSongModalEl.classList.contains('active')) {
                     correctSongModalEl.classList.remove('active');
@@ -4646,7 +4744,7 @@
                 // Playlist di YouTube Music (solo app Android): in parallelo, con un tetto di attesa
                 // cosi' una risposta lenta non ritarda i suggerimenti di artisti, album e brani.
                 const playlistsPromise = nativeHttp()
-                    ? Promise.race([searchYtmPlaylists(query), new Promise((r) => setTimeout(() => r([]), 5000))]).catch(() => [])
+                    ? Promise.race([searchYtmPlaylists(query), new Promise((r) => setTimeout(() => r([]), 9000))]).catch(() => [])
                     : Promise.resolve([]);
                 const [artistRes, albumRes, trackRes] = await Promise.all([
                     jsonpRequest(`https://api.deezer.com/search/artist?q=${encodeURIComponent(query)}&limit=4`, 6000).catch(() => null),
@@ -7096,7 +7194,7 @@
         function updateEmptyHomeState() {
             const empty = document.getElementById('emptyHome');
             if (!empty) return;
-            const hasSomething = loadRecentItems().length > 0 || loadRecentTracks().length > 0;
+            const hasSomething = loadRecentItems().length > 0 || loadRecentTracks().length > 0 || (typeof sbxHasMyPlaylists === 'function' && sbxHasMyPlaylists());
             empty.classList.toggle('hidden', hasSomething);
         }
 
@@ -8892,7 +8990,8 @@
         function searchYtmPlaylists(query) {
             const key = query.toLowerCase();
             if (ytmPlaylistSearchCache.has(key)) return ytmPlaylistSearchCache.get(key);
-            const p = NR.searchPlaylists(query).catch((err) => { console.warn('Ricerca playlist YT Music fallita:', err); return []; });
+            // Niente piu' playlist di YouTube Music: si cercano le proprie (create nell'app + account Spotify)
+            const p = Promise.resolve(typeof sbxSearchMyPlaylists === 'function' ? sbxSearchMyPlaylists(query) : []);
             ytmPlaylistSearchCache.set(key, p);
             if (ytmPlaylistSearchCache.size > 30) ytmPlaylistSearchCache.delete(ytmPlaylistSearchCache.keys().next().value);
             return p;
@@ -8934,6 +9033,8 @@
 
         async function openYtmPlaylist(url, forceRefresh = false, hint = null) {
             const id = url.slice(YTM_URL_PREFIX.length);
+            // Le playlist non arrivano piu' da YouTube Music: id "my~..." (create nell'app) o "sp~..." (account Spotify)
+            if (typeof sbxOpenSearchPlaylist === 'function' && sbxOpenSearchPlaylist(id)) return;
             const resultsStatusText = document.getElementById('resultsStatusText');
 
             const cached = forceRefresh ? null : getCachedPlaylistTracks(url);
@@ -8997,7 +9098,9 @@
         }
 
         function openPlaylistByUrl(url, forceRefresh = false) {
-            if (url && url.startsWith(YTM_URL_PREFIX)) {
+            if (url && url.startsWith('my:playlist:')) {
+                sbxOpenMyPlaylist(url.slice('my:playlist:'.length));
+            } else if (url && url.startsWith(YTM_URL_PREFIX)) {
                 openYtmPlaylist(url, forceRefresh);
             } else if (url && url.startsWith(ARTIST_SEARCH_URL_PREFIX)) {
                 reopenArtistSearchPlaylist(url, forceRefresh);
@@ -9914,7 +10017,18 @@
                         <p class="text-sm font-bold truncate ${isPlaying ? 'custom-text-accent font-black' : 'text-white'}">${escapeHtml(track.title)}</p>
                         <p class="text-xs truncate mt-1 custom-text-muted font-medium">${isNewTrack ? newBadgeHtml(newKey) : ''}${escapeHtml(track.channel)}</p>
                     </div>
+                    ${typeof sbxAddButtonHtml === 'function' ? sbxAddButtonHtml(index, track) : ''}
                 `;
+                // "+" stile Spotify: apre il menu "Salvato in" (non deve far partire il brano né la pressione prolungata)
+                const sbxAddBtn = trackRow.querySelector('.sbx-add-btn');
+                if (sbxAddBtn) {
+                    ['pointerdown', 'pointerup', 'touchstart', 'contextmenu'].forEach(ev => sbxAddBtn.addEventListener(ev, e => e.stopPropagation()));
+                    sbxAddBtn.addEventListener('click', e => {
+                        e.stopPropagation();
+                        hapticFeedback();
+                        sbxOpenSaveSheet(track);
+                    });
+                }
                 // Pressione prolungata: apre "Correggi canzone" per questo brano. Tenuta
                 // volutamente lunga (4s, non 500ms) per evitare aperture accidentali del
                 // modale di ricerca mentre si scorre/tocca la lista - qui, a differenza
@@ -10688,6 +10802,363 @@
             });
             document.addEventListener('visibilitychange', function () { if (!document.hidden) refresh(); });
         });
+    </script>
+    <script>
+    /* ====================================================================================
+       PLAYLIST PERSONALI + "SALVATO IN" + ACCOUNT SPOTIFY
+       - Le playlist create dall'utente vivono in localStorage (chiave sbx_my_playlists_v1).
+       - "Brani che ti piacciono" e' una playlist speciale sempre presente (id "liked").
+       - Il login Spotify (plugin nativo SpotifySession) serve a leggere le playlist del proprio
+         account: nessuna API ufficiale, si usa la sessione del web player.
+       ==================================================================================== */
+    (function () {
+        'use strict';
+        var KEY = 'sbx_my_playlists_v1';
+        var MY_PREFIX = 'my:playlist:';
+        var SP_KEY = 'sbx_sp_library_v1';
+        var $ = function (id) { return document.getElementById(id); };
+        var esc = function (s) { return (typeof escapeHtml === 'function') ? escapeHtml(String(s == null ? '' : s)) : String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); };
+
+        /* ---------------- archivio ---------------- */
+        function likedList() { return { id: 'liked', name: 'Brani che ti piacciono', created: 0, updated: 0, tracks: [] }; }
+        function load() {
+            try {
+                var o = JSON.parse(localStorage.getItem(KEY) || 'null');
+                if (o && Array.isArray(o.lists)) {
+                    if (!o.lists.some(function (l) { return l.id === 'liked'; })) o.lists.unshift(likedList());
+                    return o;
+                }
+            } catch (e) {}
+            return { lists: [likedList()] };
+        }
+        function save(o) { try { localStorage.setItem(KEY, JSON.stringify(o)); } catch (e) {} }
+        function keyOf(t) { return trackCacheKey(t.title, t.channel); }
+        function slim(t) { return { id: t.id || null, title: t.title, channel: t.channel, thumbnail: t.thumbnail || null, spotifyImport: !!t.spotifyImport || !t.id }; }
+        function has(list, t) { var k = keyOf(t); return list.tracks.some(function (x) { return keyOf(x) === k; }); }
+        function thumbOf(t) { return t.thumbnail || (t.id ? 'https://img.youtube.com/vi/' + t.id + '/mqdefault.jpg' : ''); }
+        function newId() { return 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+        function coverHtml(list) {
+            if (list.id === 'liked') return '<div class="sbx-pl-cover single liked"><i class="fa-solid fa-heart"></i></div>';
+            var th = list.tracks.map(thumbOf).filter(Boolean);
+            if (th.length >= 4) return '<div class="sbx-pl-cover">' + th.slice(0, 4).map(function (s) { return '<img src="' + esc(s) + '" alt="" referrerpolicy="no-referrer">'; }).join('') + '</div>';
+            if (th.length) return '<div class="sbx-pl-cover single"><img src="' + esc(th[0]) + '" alt="" referrerpolicy="no-referrer"></div>';
+            return '<div class="sbx-pl-cover single"><i class="fa-solid fa-music"></i></div>';
+        }
+        function listArtwork(list) { var th = list.tracks.map(thumbOf).filter(Boolean); return th[0] || null; }
+        function countLabel(n) { return n + (n === 1 ? ' brano' : ' brani'); }
+        function isSavedAnywhere(t) { return load().lists.some(function (l) { return has(l, t); }); }
+
+        /* ---------------- pulsante "+" sulle righe ---------------- */
+        window.sbxRefreshAddButtons = function () {
+            var o = load();
+            document.querySelectorAll('.sbx-add-btn[data-i]').forEach(function (b) {
+                var t = (typeof appState !== 'undefined') ? appState.tracks[parseInt(b.dataset.i, 10)] : null;
+                if (!t) return;
+                var saved = o.lists.some(function (l) { return has(l, t); });
+                b.classList.toggle('saved', saved);
+                b.innerHTML = '<i class="fa-solid ' + (saved ? 'fa-check' : 'fa-plus') + '"></i>';
+            });
+        };
+        window.sbxAddButtonHtml = function (index, track) {
+            var saved = isSavedAnywhere(track);
+            return '<button class="sbx-add-btn' + (saved ? ' saved' : '') + '" data-i="' + index + '" title="Salva in playlist"><i class="fa-solid ' + (saved ? 'fa-check' : 'fa-plus') + '"></i></button>';
+        };
+
+        /* ---------------- menu "Salvato in" ---------------- */
+        var S = null; // stato del menu aperto
+        function visibleLists() {
+            var o = load();
+            var rest = o.lists.filter(function (l) { return l.id !== 'liked'; });
+            var q = ($('saveSearchInput').value || '').trim().toLowerCase();
+            if (q) rest = rest.filter(function (l) { return l.name.toLowerCase().indexOf(q) !== -1; });
+            if (S.sort === 'alpha') rest.sort(function (a, b) { return a.name.localeCompare(b.name, 'it'); });
+            else rest.sort(function (a, b) { return (b.updated || 0) - (a.updated || 0); });
+            return { liked: o.lists.find(function (l) { return l.id === 'liked'; }), rest: rest };
+        }
+        function rowHtml(l) {
+            var on = !!S.staged[l.id];
+            return '<div class="sbx-pl-row' + (on ? ' on' : '') + '" data-id="' + l.id + '">' + coverHtml(l) +
+                '<div class="sbx-pl-meta"><div class="sbx-pl-name">' + esc(l.name) + '</div><div class="sbx-pl-sub">' + countLabel(l.tracks.length) + '</div></div>' +
+                '<div class="sbx-pl-tick"><i class="fa-solid fa-plus"></i></div></div>';
+        }
+        function renderSheet() {
+            var v = visibleLists();
+            $('saveList').innerHTML = rowHtml(v.liked) + v.rest.map(rowHtml).join('');
+            $('saveList').querySelectorAll('.sbx-pl-row').forEach(function (row) {
+                row.addEventListener('click', function () {
+                    if (typeof hapticFeedback === 'function') hapticFeedback();
+                    var id = row.dataset.id;
+                    S.staged[id] = !S.staged[id];
+                    row.classList.toggle('on', !!S.staged[id]);
+                });
+            });
+        }
+        window.sbxOpenSaveSheet = function (track) {
+            if (!track) return;
+            var o = load();
+            S = { track: track, staged: {}, initial: {}, sort: 'recent' };
+            o.lists.forEach(function (l) { var h = has(l, track); S.initial[l.id] = h; S.staged[l.id] = h; });
+            $('saveSearchInput').value = '';
+            $('saveSortPop').classList.remove('open');
+            $('saveSortPop').querySelectorAll('button').forEach(function (b) { b.classList.toggle('sel', b.dataset.sort === 'recent'); });
+            renderSheet();
+            $('saveSheetModal').classList.add('active');
+        };
+        function closeSheet() { $('saveSheetModal').classList.remove('active'); $('saveNewModal').classList.remove('active'); S = null; }
+        window.sbxCloseSaveSheet = function () { var m = $('saveNewModal'); if (m.classList.contains('active')) { m.classList.remove('active'); return true; } if ($('saveSheetModal').classList.contains('active')) { closeSheet(); return true; } return false; };
+
+        function commit() {
+            if (!S) return;
+            var o = load(), added = [], removed = [], now = Date.now();
+            o.lists.forEach(function (l) {
+                var want = !!S.staged[l.id], was = !!S.initial[l.id];
+                if (want === was) return;
+                var k = keyOf(S.track);
+                if (want) {
+                    if (l.id === 'liked') l.tracks.unshift(slim(S.track)); else l.tracks.push(slim(S.track));
+                    added.push(l.name);
+                } else {
+                    l.tracks = l.tracks.filter(function (x) { return keyOf(x) !== k; });
+                    removed.push(l.name);
+                }
+                l.updated = now;
+            });
+            save(o);
+            var msg = '';
+            if (added.length) msg = 'Salvato in ' + (added.length === 1 ? added[0] : added.length + ' playlist');
+            else if (removed.length) msg = 'Rimosso da ' + (removed.length === 1 ? removed[0] : removed.length + ' playlist');
+            closeSheet();
+            if (msg && typeof showToast === 'function') showToast(msg);
+            window.sbxRefreshAddButtons();
+            renderMyPlaylists();
+            // se la lista aperta e' una di queste, ridisegnala
+            try {
+                if (typeof currentLoadedKey !== 'undefined' && currentLoadedKey && currentLoadedKey.indexOf('playlist:' + MY_PREFIX) === 0) {
+                    window.sbxOpenMyPlaylist(currentLoadedKey.slice(('playlist:' + MY_PREFIX).length), true);
+                }
+            } catch (e) {}
+        }
+
+        function createList(name) {
+            name = (name || '').trim();
+            if (!name) return null;
+            var o = load();
+            var l = { id: newId(), name: name.slice(0, 60), created: Date.now(), updated: Date.now(), tracks: [] };
+            o.lists.push(l);
+            save(o);
+            return l;
+        }
+
+        /* ---------------- playlist personali: apertura ---------------- */
+        window.sbxOpenMyPlaylist = function (id, silent) {
+            var l = load().lists.find(function (x) { return x.id === id; });
+            if (!l) { if (typeof showToast === 'function') showToast('Playlist non trovata'); return; }
+            var url = MY_PREFIX + id;
+            currentListSource = 'spotify';
+            nextSearchPageToken = '';
+            appState.tracks = l.tracks.map(function (t) { return Object.assign({ artworkFetched: !!t.thumbnail, resolved: !!t.id }, t); });
+            appState.currentIndex = -1;
+            currentLoadedKey = 'playlist:' + url;
+            currentLoadedTitle = l.name;
+            toggleDownloadButtons(false);
+            showResultsView(l.name);
+            if (!l.tracks.length) {
+                $('trackList').innerHTML = '';
+                var st = $('resultsStatusText');
+                if (st) { st.classList.remove('hidden'); st.innerText = 'Playlist vuota: tocca il + accanto a una canzone per aggiungerla.'; }
+            } else {
+                renderTracklist(0);
+            }
+            updateRefreshPlaylistBtn(null);
+            if (!silent && l.tracks.length) addRecentItem({ name: l.name, type: 'playlist', url: url, artwork: listArtwork(l) });
+        };
+
+        /* ---------------- home: "Le tue playlist" ---------------- */
+        var spLib = [], spLoggedIn = false; // nessun account: solo ricerca/apertura pubblica
+        try { localStorage.removeItem(SP_KEY); } catch (e) {}
+
+        function cardHtml(c, i) {
+            var inner = c.thumb ? '' : '<i class="fa-solid ' + (c.liked ? 'fa-heart' : 'fa-music') + '"></i>';
+            var style = c.thumb ? "background-image:url('" + String(c.thumb).replace(/'/g, "\\'") + "')" : (c.liked ? 'background:linear-gradient(135deg,var(--accent),#7a3bff);color:#fff' : '');
+            return '<div class="chart-card" data-i="' + i + '"><div class="chart-card-thumb" style="' + style + '">' + inner + '</div>' +
+                (c.sp ? '<i class="fa-brands fa-spotify sbx-sp-badge"></i>' : '') +
+                '<div class="chart-card-label">' + esc(c.name) + '</div></div>';
+        }
+        function renderMyPlaylists() {
+            var row = $('myPlaylistsRow'); if (!row) return;
+            var o = load();
+            var cards = o.lists.filter(function (l) { return l.id === 'liked' ? l.tracks.length > 0 : true; }).map(function (l) {
+                return { kind: 'my', id: l.id, name: l.name, thumb: listArtwork(l), liked: l.id === 'liked' };
+            });
+            spLib.forEach(function (p) { cards.push({ kind: 'sp', id: p.id, name: p.name, thumb: p.cover, sp: true }); });
+            $('myPlaylistsSection').classList.toggle('hidden', cards.length === 0);
+            row.innerHTML = cards.map(cardHtml).join('');
+            row.querySelectorAll('.chart-card').forEach(function (el) {
+                var c = cards[parseInt(el.dataset.i, 10)];
+                var timer = null, fired = false;
+                el.addEventListener('click', function () {
+                    if (fired) { fired = false; return; }
+                    if (typeof hapticFeedback === 'function') hapticFeedback();
+                    if (c.kind === 'my') window.sbxOpenMyPlaylist(c.id); else openSpotifyAccountPlaylist(c);
+                });
+                if (c.kind === 'my' && c.id !== 'liked') {
+                    el.addEventListener('pointerdown', function () { fired = false; timer = setTimeout(function () { fired = true; if (typeof hapticFeedback === 'function') hapticFeedback(); if (confirm('Eliminare la playlist "' + c.name + '"?')) { var oo = load(); oo.lists = oo.lists.filter(function (x) { return x.id !== c.id; }); save(oo); renderMyPlaylists(); window.sbxRefreshAddButtons(); } }, 650); });
+                    ['pointerup', 'pointerleave', 'pointercancel'].forEach(function (ev) { el.addEventListener(ev, function () { if (timer) { clearTimeout(timer); timer = null; } }); });
+                    el.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+                }
+            });
+            if (typeof updateEmptyHomeState === 'function') updateEmptyHomeState();
+        }
+        window.sbxRenderMyPlaylists = renderMyPlaylists;
+        window.sbxHasMyPlaylists = function () { return load().lists.some(function (l) { return l.tracks.length > 0 || l.id !== 'liked'; }) || spLib.length > 0; };
+
+        /* ---------------- ricerca: playlist personali al posto di quelle di YouTube Music ---------------- */
+        var spSearchMap = {}, spSearchCache = {};
+        function localMatches(q) {
+            var out = [];
+            load().lists.forEach(function (l) {
+                if (l.name.toLowerCase().indexOf(q) !== -1) out.push({ id: 'my~' + l.id, title: l.name, subtitle: countLabel(l.tracks.length), thumb: listArtwork(l) });
+            });
+            return out;
+        }
+        async function spotifySearch(q) {
+            if (spSearchCache[q]) return spSearchCache[q];
+            var url = 'https://open.spotify.com/search/' + encodeURIComponent(q) + '/playlists';
+            var data = await gql('searchPlaylists', function (v) {
+                ['searchTerm', 'query', 'q'].forEach(function (k) { if (k in v) v[k] = q; });
+                if (!('searchTerm' in v) && !('query' in v) && !('q' in v)) v.searchTerm = q;
+                v.offset = 0; v.limit = 10;
+                return v;
+            }, url);
+            var seen = {}, out = [];
+            walk(data, function (n) {
+                if (n.__typename === 'Playlist' && typeof n.uri === 'string' && n.uri.indexOf('spotify:playlist:') === 0 && n.name) {
+                    var id = n.uri.split(':')[2];
+                    if (seen[id]) return; seen[id] = 1;
+                    var owner = n.ownerV2 && n.ownerV2.data && n.ownerV2.data.name;
+                    var cover = firstImg(n);
+                    spSearchMap[id] = { id: id, name: n.name, thumb: cover };
+                    out.push({ id: 'sp~' + id, title: n.name, subtitle: owner ? 'Spotify \u2022 ' + owner : 'Spotify', thumb: cover });
+                }
+            });
+            spSearchCache[q] = out;
+            return out;
+        }
+        window.sbxSearchMyPlaylists = async function (query) {
+            var q = (query || '').trim().toLowerCase();
+            if (q.length < 2) return [];
+            var local = localMatches(q), remote = [];
+            try { remote = await spotifySearch(q); } catch (e) { console.warn('Ricerca playlist Spotify fallita:', e); }
+            return local.concat(remote).slice(0, 12);
+        };
+        // riscalda hash e token della ricerca appena l'app parte, cosi' la prima ricerca non aspetta il web player
+        window.sbxWarmSpotifySearch = function () { var P = spPlugin(); if (P) P.getSession({ need: 'searchPlaylists', url: 'https://open.spotify.com/search/a/playlists', anon: true }).catch(function () {}); };
+        window.sbxOpenSearchPlaylist = function (id) {
+            if (id.indexOf('my~') === 0) { window.sbxOpenMyPlaylist(id.slice(3)); return true; }
+            if (id.indexOf('sp~') === 0) { var k = id.slice(3), p = spSearchMap[k] || spLib.find(function (x) { return x.id === k; }); openSpotifyAccountPlaylist({ id: k, name: p ? p.name : 'Playlist', thumb: p ? (p.thumb || p.cover) : null }); return true; }
+            return false;
+        };
+
+        /* ---------------- account Spotify (login + lettura playlist) ---------------- */
+        var spLoggedIn = false;
+        var SP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+        function spPlugin() { return (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.SpotifySession) || null; }
+        function toastMsg(m) { if (typeof showToast === 'function') showToast(m); }
+
+        async function gql(op, mutateVars, warmUrl, retried) {
+            var P = spPlugin(); if (!P) throw new Error('Disponibile solo nell\'app Android');
+            var s = await P.getSession({ need: op, url: warmUrl || 'https://open.spotify.com/collection/playlists', force: !!retried, anon: true });
+            var h = s.hashes && s.hashes[op];
+            if (!h) throw new Error('hash_mancante:' + op);
+            var vars = Object.assign({}, h.vars || {});
+            if (mutateVars) vars = mutateVars(vars);
+            var headers = { 'Authorization': 'Bearer ' + s.accessToken, 'Content-Type': 'application/json;charset=UTF-8', 'Accept': 'application/json', 'app-platform': 'WebPlayer', 'Accept-Language': 'it', 'User-Agent': SP_UA, 'Origin': 'https://open.spotify.com', 'Referer': 'https://open.spotify.com/' };
+            if (s.clientToken) headers['client-token'] = s.clientToken;
+            var body = { variables: vars, operationName: op, extensions: { persistedQuery: { version: 1, sha256Hash: h.hash } } };
+            var np = window.Capacitor.Plugins.NativeHttp;
+            var r = await np.request({ url: h.endpoint || 'https://api-partner.spotify.com/pathfinder/v2/query', method: 'POST', headers: headers, body: JSON.stringify(body), timeout: 20000 });
+            if ((r.status === 401 || r.status === 403) && !retried) return gql(op, mutateVars, warmUrl, true);
+            if (r.status >= 400) throw new Error('http_' + r.status + ':' + op);
+            return typeof r.data === 'string' ? JSON.parse(r.data) : r.data;
+        }
+        function walk(node, fn) {
+            if (Array.isArray(node)) { node.forEach(function (n) { walk(n, fn); }); return; }
+            if (node && typeof node === 'object') { fn(node); Object.keys(node).forEach(function (k) { walk(node[k], fn); }); }
+        }
+        function firstImg(o) {
+            var src = o && ((o.images && o.images.items && o.images.items[0] && o.images.items[0].sources) || (o.coverArt && o.coverArt.sources) || (o.images && o.images[0] && o.images[0].sources));
+            if (!src || !src.length) return null;
+            return (src[src.length - 1] || src[0]).url || null;
+        }
+
+        async function openSpotifyAccountPlaylist(c) {
+            var url = 'https://open.spotify.com/playlist/' + c.id;
+            try {
+                showResultsView(c.name);
+                var st = $('resultsStatusText'); if (st) { st.classList.remove('hidden'); st.innerText = 'Carico la playlist…'; }
+                var tracks = [], total = Infinity, name = c.name, cover = c.thumb || null, offset = 0;
+                while (offset < total && offset < 1000) {
+                    var o = offset;
+                    var data = await gql('fetchPlaylist', function (v) { v.uri = 'spotify:playlist:' + c.id; v.offset = o; v.limit = 100; return v; }, url);
+                    var pv2 = data && data.data && (data.data.playlistV2 || data.data.playlist);
+                    if (pv2 && pv2.name) name = pv2.name;
+                    if (pv2 && !cover) cover = firstImg(pv2);
+                    if (pv2 && pv2.content && typeof pv2.content.totalCount === 'number') total = pv2.content.totalCount;
+                    var before = tracks.length, seen = {};
+                    walk(data, function (n) {
+                        if (n.__typename === 'Track' && n.uri && n.name && !seen[n.uri]) {
+                            seen[n.uri] = 1;
+                            var artists = (n.artists && n.artists.items || []).map(function (a) { return a.profile && a.profile.name; }).filter(Boolean).join(', ');
+                            var img = firstImg(n.albumOfTrack || {});
+                            tracks.push({ id: null, title: n.name, channel: artists, thumbnail: img, artworkFetched: !!img, resolved: false, spotifyImport: true });
+                        }
+                    });
+                    if (tracks.length === before) break;
+                    offset += 100;
+                    if (total === Infinity) break;
+                }
+                if (!tracks.length) throw new Error('nessun_brano');
+                setCachedPlaylistTracks(url, { name: name, artwork: cover, tracks: tracks });
+                await importSpotifyPlaylist(url); // la legge dalla cache appena scritta
+            } catch (e) {
+                console.warn('Playlist Spotify (account) non letta, provo il metodo pubblico:', e);
+                importSpotifyPlaylist(url);
+            }
+        }
+
+        /* ---------------- collegamenti UI ---------------- */
+        function init() {
+            if (!$('saveSheetModal')) return;
+            $('saveCancelBtn').addEventListener('click', closeSheet);
+            $('saveDoneTopBtn').addEventListener('click', commit);
+            $('saveDoneFab').addEventListener('click', commit);
+            $('saveSheetModal').addEventListener('click', function (e) { if (e.target.id === 'saveSheetModal') closeSheet(); });
+            $('saveSearchInput').addEventListener('input', function () { if (S) renderSheet(); });
+            $('saveSortBtn').addEventListener('click', function () { $('saveSortPop').classList.toggle('open'); });
+            $('saveSortPop').querySelectorAll('button').forEach(function (b) {
+                b.addEventListener('click', function () {
+                    S.sort = b.dataset.sort;
+                    $('saveSortPop').querySelectorAll('button').forEach(function (x) { x.classList.toggle('sel', x === b); });
+                    $('saveSortPop').classList.remove('open');
+                    renderSheet();
+                });
+            });
+            $('saveNewBtn').addEventListener('click', function () { $('saveNewInput').value = ''; $('saveNewModal').classList.add('active'); setTimeout(function () { $('saveNewInput').focus(); }, 250); });
+            $('saveNewCancel').addEventListener('click', function () { $('saveNewModal').classList.remove('active'); });
+            $('saveNewModal').addEventListener('click', function (e) { if (e.target.id === 'saveNewModal') $('saveNewModal').classList.remove('active'); });
+            function doCreate() {
+                var l = createList($('saveNewInput').value);
+                if (!l) return;
+                $('saveNewModal').classList.remove('active');
+                if (S) { S.initial[l.id] = false; S.staged[l.id] = true; renderSheet(); }
+            }
+            $('saveNewOk').addEventListener('click', doCreate);
+            $('saveNewInput').addEventListener('keydown', function (e) { if (e.key === 'Enter') doCreate(); });
+            renderMyPlaylists();
+            setTimeout(window.sbxWarmSpotifySearch, 2500);
+        }
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+    })();
     </script>
 </body>
 </html>
