@@ -38,7 +38,7 @@ jobs:
         run: |
           PKG_DIR=android/app/src/main/java/it/sbixify/app
           mkdir -p "$PKG_DIR"
-          cp NativeHttpPlugin.java SpotifySessionPlugin.java MainActivity.java MediaButtonReceiver.java BrowserStub.java "$PKG_DIR/"
+          cp NativeHttpPlugin.java MainActivity.java MediaButtonReceiver.java BrowserStub.java "$PKG_DIR/"
           rm -rf android/app/src/main/res/mipmap-anydpi-v26
           find android/app/src/main/res -name 'ic_launcher*.png' -exec cp 192x192.png {} \;
           mkdir -p ~/.android
