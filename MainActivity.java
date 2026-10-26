@@ -49,7 +49,6 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(NativeHttpPlugin.class);
-        registerPlugin(SpotifySessionPlugin.class);
         super.onCreate(savedInstanceState);
         applyShowOverLock();
 
