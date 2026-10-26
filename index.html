@@ -1880,11 +1880,12 @@
         .sbx-sort-pop.open { display:block; }
         .sbx-sort-pop button { display:block; width:100%; text-align:left; padding:11px 14px; font-size:14px; font-weight:700; color:var(--text-main); background:none; border:0; border-radius:8px; white-space:nowrap; }
         .sbx-sort-pop button.sel { color:var(--accent); }
-        .sbx-new-input { width:100%; background:var(--bg-input); border:0; outline:0; border-radius:12px; color:var(--text-main); font-size:17px; font-weight:700; padding:14px 16px; margin:6px 0 16px; }
+        .sbx-new-input { width:100%; box-sizing:border-box; background:#fff; border:0; outline:0; border-radius:999px; color:#111; font-size:17px; font-weight:700; padding:14px 20px; margin:6px 0 16px; }
+        .sbx-new-input::placeholder { color:#777; opacity:1; }
         .sbx-new-actions { display:flex; gap:10px; }
         .sbx-new-actions button { flex:1; height:46px; border-radius:999px; border:0; font-size:15px; font-weight:800; }
         .sbx-new-actions .ok { background:#fff; color:#111; }
-        .sbx-new-actions .no { background:#fff; color:#111; }
+        .sbx-new-actions .no { background:#c4c8cd; color:#111; }
         .sbx-sp-chip { display:inline-flex; align-items:center; gap:7px; padding:7px 13px; border-radius:999px; background:var(--bg-input); color:var(--text-main); font-size:12.5px; font-weight:800; border:0; }
         .sbx-sp-chip i { color:var(--accent); }
         .sbx-pl-head { display:flex; align-items:center; justify-content:space-between; padding-right:24px; }
@@ -7208,7 +7209,7 @@
         function loadRecentPlaylists() {
             try {
                 const raw = JSON.parse(localStorage.getItem(RECENT_PLAYLISTS_KEY));
-                return Array.isArray(raw) ? raw : [];
+                return Array.isArray(raw) ? raw.filter(it => !String((it && it.url) || '').startsWith('my:playlist:')) : [];
             } catch (err) {
                 return [];
             }
@@ -7224,6 +7225,7 @@
 
         function addRecentPlaylist({ name, url, artwork = null }) {
             if (!name || !url) return;
+            if (String(url).startsWith('my:playlist:')) return;
             let items = loadRecentPlaylists();
             items = items.filter(it => it.url !== url);
             items.unshift({ name, url, artwork, ts: Date.now() });
@@ -7293,7 +7295,7 @@
                 let items = Array.isArray(raw) ? raw : [];
                 // Migrazione: scarta eventuali vecchie voci "canzone" salvate prima che i
                 // Recenti diventassero un elenco di sole playlist.
-                const cleaned = items.filter(it => it.type === 'playlist');
+                const cleaned = items.filter(it => it.type === 'playlist' && !String(it.url || '').startsWith('my:playlist:'));
                 if (cleaned.length !== items.length) saveRecentItems(cleaned);
                 return cleaned;
             } catch (err) {
@@ -7318,6 +7320,7 @@
         // davanti nell'array, "ferme", mentre le altre continuano a scorrere sotto.
         function addRecentItem({ name, type, query = null, url = null, artwork = null, track = null }) {
             if (!name) return;
+            if (String(url || '').startsWith('my:playlist:')) return; // le playlist create stanno solo in "Le tue playlist"
             let items = loadRecentItems();
             const existingIdx = items.findIndex(it => {
                 if (it.type !== type) return false;
@@ -11145,7 +11148,6 @@
             updateRefreshPlaylistBtn(null);
             var rb = $('renamePlaylistBtn');
             if (rb) { rb.classList.toggle('hidden', id === 'liked'); rb.dataset.id = id; }
-            if (!silent && l.tracks.length) addRecentItem({ name: l.name, type: 'playlist', url: url, artwork: listArtwork(l) });
         };
 
         /* ---------------- home: "Le tue playlist" ---------------- */
@@ -11226,7 +11228,6 @@
                 $('saveNewDelete').classList.toggle('hidden', !id);
                 $('saveNewInput').value = l ? l.name : '';
                 $('saveNewModal').classList.add('active');
-                setTimeout(function () { $('saveNewInput').focus(); $('saveNewInput').select(); }, 250);
             }
             window.sbxRenamePlaylist = openNameModal;
             $('saveNewBtn').addEventListener('click', function () { openNameModal(null); });
@@ -11243,7 +11244,6 @@
                         if (typeof currentLoadedKey !== 'undefined' && currentLoadedKey === 'playlist:' + MY_PREFIX + l.id) {
                             currentLoadedTitle = l.name;
                             if (rt) rt.textContent = l.name;
-                            if (typeof addRecentItem === 'function') addRecentItem({ name: l.name, type: 'playlist', url: MY_PREFIX + l.id, artwork: listArtwork(l) });
                         }
                         renderMyPlaylists();
                         toastMsg('Playlist rinominata');
@@ -11262,6 +11262,7 @@
                 var l = load().lists.find(function (x) { return x.id === renameId; });
                 if (!l || !confirm('Eliminare la playlist "' + l.name + '"?')) return;
                 var o = load(); o.lists = o.lists.filter(function (x) { return x.id !== renameId; }); save(o);
+                if (typeof removeRecentPlaylist === 'function') removeRecentPlaylist(MY_PREFIX + renameId);
                 $('saveNewModal').classList.remove('active');
                 renderMyPlaylists(); window.sbxRefreshAddButtons();
                 if (typeof currentLoadedKey !== 'undefined' && currentLoadedKey === 'playlist:' + MY_PREFIX + renameId) { var bb = $('backToHomeBtn'); if (bb) bb.click(); }
