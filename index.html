@@ -2058,17 +2058,17 @@
 
                     <div class="quick-eyebrow">Playlist</div>
                     <div id="recentGrid" class="quick-grid hidden"></div>
-                    <div id="recentTracksSection" class="hidden">
-                        <div class="quick-eyebrow">Canzoni recenti</div>
-                        <div id="recentTracksCol" class="tracks-col"></div>
-                    </div>
-
                     <!-- Le tue playlist (create nell'app + quelle del tuo account Spotify, dopo il login) -->
                     <div id="myPlaylistsSection">
                         <div class="sbx-pl-head">
                             <div class="quick-eyebrow">Le tue playlist</div>
                         </div>
                         <div id="myPlaylistsRow" class="charts-row"></div>
+                    </div>
+
+                    <div id="recentTracksSection" class="hidden">
+                        <div class="quick-eyebrow">Canzoni recenti</div>
+                        <div id="recentTracksCol" class="tracks-col"></div>
                     </div>
 
                     <!-- Classifiche YouTube Music + top artisti (IT e globale) -->
@@ -4744,17 +4744,25 @@
                 // Playlist di YouTube Music (solo app Android): in parallelo, con un tetto di attesa
                 // cosi' una risposta lenta non ritarda i suggerimenti di artisti, album e brani.
                 const playlistsPromise = nativeHttp()
-                    ? Promise.race([searchYtmPlaylists(query), new Promise((r) => setTimeout(() => r([]), 9000))]).catch(() => [])
+                    ? Promise.race([searchYtmPlaylists(query), new Promise((r) => setTimeout(() => r([]), 5000))]).catch(() => [])
                     : Promise.resolve([]);
+                const norm = (x) => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+                const nq = norm(query);
+                // Deezer ordina in modo "fuzzy" (es. "petal" -> "Petak"): porto in alto i nomi uguali al testo, poi quelli che iniziano cosi'
+                const rank = (arr, nameOf, n) => arr
+                    .map((it, i) => { const nm = norm(nameOf(it)); return { it, i, sc: nm === nq ? 0 : (nm.indexOf(nq) === 0 ? 1 : 2) }; })
+                    .sort((x, y) => x.sc - y.sc || x.i - y.i)
+                    .slice(0, n).map((x) => x.it);
                 const [artistRes, albumRes, trackRes] = await Promise.all([
-                    jsonpRequest(`https://api.deezer.com/search/artist?q=${encodeURIComponent(query)}&limit=4`, 6000).catch(() => null),
-                    jsonpRequest(`https://api.deezer.com/search/album?q=${encodeURIComponent(query)}&limit=4`, 6000).catch(() => null),
-                    jsonpRequest(`https://api.deezer.com/search/track?q=${encodeURIComponent(query)}&limit=6`, 6000).catch(() => null)
+                    jsonpRequest(`https://api.deezer.com/search/artist?q=${encodeURIComponent(query)}&limit=10`, 6000).catch(() => null),
+                    jsonpRequest(`https://api.deezer.com/search/album?q=${encodeURIComponent(query)}&limit=15`, 6000).catch(() => null),
+                    jsonpRequest(`https://api.deezer.com/search/track?q=${encodeURIComponent(query)}&limit=15`, 6000).catch(() => null)
                 ]);
+                const ok = (r) => (r && Array.isArray(r.data)) ? r.data : [];
                 return {
-                    artists: (artistRes && Array.isArray(artistRes.data)) ? artistRes.data : [],
-                    albums: (albumRes && Array.isArray(albumRes.data)) ? albumRes.data : [],
-                    tracks: (trackRes && Array.isArray(trackRes.data)) ? trackRes.data : [],
+                    artists: rank(ok(artistRes), (a) => a.name, 4),
+                    albums: rank(ok(albumRes), (a) => a.title, 4),
+                    tracks: rank(ok(trackRes), (t) => t.title, 6),
                     playlists: (await playlistsPromise) || []
                 };
             }
@@ -10805,11 +10813,9 @@
     </script>
     <script>
     /* ====================================================================================
-       PLAYLIST PERSONALI + "SALVATO IN" + ACCOUNT SPOTIFY
+       PLAYLIST PERSONALI + "SALVATO IN"
        - Le playlist create dall'utente vivono in localStorage (chiave sbx_my_playlists_v1).
        - "Brani che ti piacciono" e' una playlist speciale sempre presente (id "liked").
-       - Il login Spotify (plugin nativo SpotifySession) serve a leggere le playlist del proprio
-         account: nessuna API ufficiale, si usa la sessione del web player.
        ==================================================================================== */
     (function () {
         'use strict';
@@ -10974,7 +10980,6 @@
         };
 
         /* ---------------- home: "Le tue playlist" ---------------- */
-        var spLib = [], spLoggedIn = false; // nessun account: solo ricerca/apertura pubblica
         try { localStorage.removeItem(SP_KEY); } catch (e) {}
 
         function cardHtml(c, i) {
@@ -10990,7 +10995,6 @@
             var cards = o.lists.filter(function (l) { return l.id === 'liked' ? l.tracks.length > 0 : true; }).map(function (l) {
                 return { kind: 'my', id: l.id, name: l.name, thumb: listArtwork(l), liked: l.id === 'liked' };
             });
-            spLib.forEach(function (p) { cards.push({ kind: 'sp', id: p.id, name: p.name, thumb: p.cover, sp: true }); });
             $('myPlaylistsSection').classList.toggle('hidden', cards.length === 0);
             row.innerHTML = cards.map(cardHtml).join('');
             row.querySelectorAll('.chart-card').forEach(function (el) {
@@ -10999,7 +11003,7 @@
                 el.addEventListener('click', function () {
                     if (fired) { fired = false; return; }
                     if (typeof hapticFeedback === 'function') hapticFeedback();
-                    if (c.kind === 'my') window.sbxOpenMyPlaylist(c.id); else openSpotifyAccountPlaylist(c);
+                    window.sbxOpenMyPlaylist(c.id);
                 });
                 if (c.kind === 'my' && c.id !== 'liked') {
                     el.addEventListener('pointerdown', function () { fired = false; timer = setTimeout(function () { fired = true; if (typeof hapticFeedback === 'function') hapticFeedback(); if (confirm('Eliminare la playlist "' + c.name + '"?')) { var oo = load(); oo.lists = oo.lists.filter(function (x) { return x.id !== c.id; }); save(oo); renderMyPlaylists(); window.sbxRefreshAddButtons(); } }, 650); });
@@ -11010,121 +11014,22 @@
             if (typeof updateEmptyHomeState === 'function') updateEmptyHomeState();
         }
         window.sbxRenderMyPlaylists = renderMyPlaylists;
-        window.sbxHasMyPlaylists = function () { return load().lists.some(function (l) { return l.tracks.length > 0 || l.id !== 'liked'; }) || spLib.length > 0; };
+        window.sbxHasMyPlaylists = function () { return load().lists.some(function (l) { return l.tracks.length > 0 || l.id !== 'liked'; }); };
 
         /* ---------------- ricerca: playlist personali al posto di quelle di YouTube Music ---------------- */
-        var spSearchMap = {}, spSearchCache = {};
-        function localMatches(q) {
+        window.sbxSearchMyPlaylists = function (query) {
+            var q = (query || '').trim().toLowerCase();
+            if (q.length < 2) return [];
             var out = [];
             load().lists.forEach(function (l) {
                 if (l.name.toLowerCase().indexOf(q) !== -1) out.push({ id: 'my~' + l.id, title: l.name, subtitle: countLabel(l.tracks.length), thumb: listArtwork(l) });
             });
             return out;
-        }
-        async function spotifySearch(q) {
-            if (spSearchCache[q]) return spSearchCache[q];
-            var url = 'https://open.spotify.com/search/' + encodeURIComponent(q) + '/playlists';
-            var data = await gql('searchPlaylists', function (v) {
-                ['searchTerm', 'query', 'q'].forEach(function (k) { if (k in v) v[k] = q; });
-                if (!('searchTerm' in v) && !('query' in v) && !('q' in v)) v.searchTerm = q;
-                v.offset = 0; v.limit = 10;
-                return v;
-            }, url);
-            var seen = {}, out = [];
-            walk(data, function (n) {
-                if (n.__typename === 'Playlist' && typeof n.uri === 'string' && n.uri.indexOf('spotify:playlist:') === 0 && n.name) {
-                    var id = n.uri.split(':')[2];
-                    if (seen[id]) return; seen[id] = 1;
-                    var owner = n.ownerV2 && n.ownerV2.data && n.ownerV2.data.name;
-                    var cover = firstImg(n);
-                    spSearchMap[id] = { id: id, name: n.name, thumb: cover };
-                    out.push({ id: 'sp~' + id, title: n.name, subtitle: owner ? 'Spotify \u2022 ' + owner : 'Spotify', thumb: cover });
-                }
-            });
-            spSearchCache[q] = out;
-            return out;
-        }
-        window.sbxSearchMyPlaylists = async function (query) {
-            var q = (query || '').trim().toLowerCase();
-            if (q.length < 2) return [];
-            var local = localMatches(q), remote = [];
-            try { remote = await spotifySearch(q); } catch (e) { console.warn('Ricerca playlist Spotify fallita:', e); }
-            return local.concat(remote).slice(0, 12);
         };
-        // riscalda hash e token della ricerca appena l'app parte, cosi' la prima ricerca non aspetta il web player
-        window.sbxWarmSpotifySearch = function () { var P = spPlugin(); if (P) P.getSession({ need: 'searchPlaylists', url: 'https://open.spotify.com/search/a/playlists', anon: true }).catch(function () {}); };
         window.sbxOpenSearchPlaylist = function (id) {
             if (id.indexOf('my~') === 0) { window.sbxOpenMyPlaylist(id.slice(3)); return true; }
-            if (id.indexOf('sp~') === 0) { var k = id.slice(3), p = spSearchMap[k] || spLib.find(function (x) { return x.id === k; }); openSpotifyAccountPlaylist({ id: k, name: p ? p.name : 'Playlist', thumb: p ? (p.thumb || p.cover) : null }); return true; }
             return false;
         };
-
-        /* ---------------- account Spotify (login + lettura playlist) ---------------- */
-        var spLoggedIn = false;
-        var SP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
-        function spPlugin() { return (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.SpotifySession) || null; }
-        function toastMsg(m) { if (typeof showToast === 'function') showToast(m); }
-
-        async function gql(op, mutateVars, warmUrl, retried) {
-            var P = spPlugin(); if (!P) throw new Error('Disponibile solo nell\'app Android');
-            var s = await P.getSession({ need: op, url: warmUrl || 'https://open.spotify.com/collection/playlists', force: !!retried, anon: true });
-            var h = s.hashes && s.hashes[op];
-            if (!h) throw new Error('hash_mancante:' + op);
-            var vars = Object.assign({}, h.vars || {});
-            if (mutateVars) vars = mutateVars(vars);
-            var headers = { 'Authorization': 'Bearer ' + s.accessToken, 'Content-Type': 'application/json;charset=UTF-8', 'Accept': 'application/json', 'app-platform': 'WebPlayer', 'Accept-Language': 'it', 'User-Agent': SP_UA, 'Origin': 'https://open.spotify.com', 'Referer': 'https://open.spotify.com/' };
-            if (s.clientToken) headers['client-token'] = s.clientToken;
-            var body = { variables: vars, operationName: op, extensions: { persistedQuery: { version: 1, sha256Hash: h.hash } } };
-            var np = window.Capacitor.Plugins.NativeHttp;
-            var r = await np.request({ url: h.endpoint || 'https://api-partner.spotify.com/pathfinder/v2/query', method: 'POST', headers: headers, body: JSON.stringify(body), timeout: 20000 });
-            if ((r.status === 401 || r.status === 403) && !retried) return gql(op, mutateVars, warmUrl, true);
-            if (r.status >= 400) throw new Error('http_' + r.status + ':' + op);
-            return typeof r.data === 'string' ? JSON.parse(r.data) : r.data;
-        }
-        function walk(node, fn) {
-            if (Array.isArray(node)) { node.forEach(function (n) { walk(n, fn); }); return; }
-            if (node && typeof node === 'object') { fn(node); Object.keys(node).forEach(function (k) { walk(node[k], fn); }); }
-        }
-        function firstImg(o) {
-            var src = o && ((o.images && o.images.items && o.images.items[0] && o.images.items[0].sources) || (o.coverArt && o.coverArt.sources) || (o.images && o.images[0] && o.images[0].sources));
-            if (!src || !src.length) return null;
-            return (src[src.length - 1] || src[0]).url || null;
-        }
-
-        async function openSpotifyAccountPlaylist(c) {
-            var url = 'https://open.spotify.com/playlist/' + c.id;
-            try {
-                showResultsView(c.name);
-                var st = $('resultsStatusText'); if (st) { st.classList.remove('hidden'); st.innerText = 'Carico la playlist…'; }
-                var tracks = [], total = Infinity, name = c.name, cover = c.thumb || null, offset = 0;
-                while (offset < total && offset < 1000) {
-                    var o = offset;
-                    var data = await gql('fetchPlaylist', function (v) { v.uri = 'spotify:playlist:' + c.id; v.offset = o; v.limit = 100; return v; }, url);
-                    var pv2 = data && data.data && (data.data.playlistV2 || data.data.playlist);
-                    if (pv2 && pv2.name) name = pv2.name;
-                    if (pv2 && !cover) cover = firstImg(pv2);
-                    if (pv2 && pv2.content && typeof pv2.content.totalCount === 'number') total = pv2.content.totalCount;
-                    var before = tracks.length, seen = {};
-                    walk(data, function (n) {
-                        if (n.__typename === 'Track' && n.uri && n.name && !seen[n.uri]) {
-                            seen[n.uri] = 1;
-                            var artists = (n.artists && n.artists.items || []).map(function (a) { return a.profile && a.profile.name; }).filter(Boolean).join(', ');
-                            var img = firstImg(n.albumOfTrack || {});
-                            tracks.push({ id: null, title: n.name, channel: artists, thumbnail: img, artworkFetched: !!img, resolved: false, spotifyImport: true });
-                        }
-                    });
-                    if (tracks.length === before) break;
-                    offset += 100;
-                    if (total === Infinity) break;
-                }
-                if (!tracks.length) throw new Error('nessun_brano');
-                setCachedPlaylistTracks(url, { name: name, artwork: cover, tracks: tracks });
-                await importSpotifyPlaylist(url); // la legge dalla cache appena scritta
-            } catch (e) {
-                console.warn('Playlist Spotify (account) non letta, provo il metodo pubblico:', e);
-                importSpotifyPlaylist(url);
-            }
-        }
 
         /* ---------------- collegamenti UI ---------------- */
         function init() {
@@ -11155,7 +11060,6 @@
             $('saveNewOk').addEventListener('click', doCreate);
             $('saveNewInput').addEventListener('keydown', function (e) { if (e.key === 'Enter') doCreate(); });
             renderMyPlaylists();
-            setTimeout(window.sbxWarmSpotifySearch, 2500);
         }
         if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
     })();
