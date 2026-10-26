@@ -988,6 +988,7 @@
            renderTracklist, home); artisti un tondo più grande (52px, come .artist-row) per
            distinguerli a colpo d'occhio senza tornare al quadrato. */
         .suggest-row .suggest-thumb { width:44px; height:44px; border-radius:50%; flex-shrink:0; background-size:cover; background-position:center; background-color:rgba(255,255,255,0.08); display:flex; align-items:center; justify-content:center; color:var(--text-muted); font-size:13px; }
+        .suggest-row.is-query .suggest-thumb { background:transparent; width:36px; height:36px; color:var(--text-muted); }
         .suggest-row.is-artist .suggest-thumb { width:52px; height:52px; }
         .suggest-row.is-album .suggest-thumb { width:52px; height:52px; border-radius:8px; }
         .suggest-row.is-playlist .suggest-thumb { width:52px; height:52px; border-radius:8px; }
@@ -2101,6 +2102,9 @@
                             <i class="fa-solid fa-arrow-left"></i>
                         </button>
                         <span class="rt display" id="resultsTitle">Risultati</span>
+                        <button id="renamePlaylistBtn" class="hidden refresh-btn" title="Rinomina playlist">
+                            <i class="fa-solid fa-pen"></i>
+                        </button>
                         <button id="refreshPlaylistBtn" class="hidden refresh-btn" title="Aggiorna playlist (ricarica da Spotify, salta la cache)">
                             <i class="fa-solid fa-rotate"></i>
                         </button>
@@ -2404,12 +2408,13 @@
     <div id="saveNewModal" class="sleep-timer-modal" style="z-index:120;">
         <div class="sleep-timer-sheet">
             <div class="sleep-timer-sheet-handle"></div>
-            <h3 class="sleep-timer-sheet-title">Dai un nome alla playlist</h3>
+            <h3 id="saveNewTitle" class="sleep-timer-sheet-title">Dai un nome alla playlist</h3>
             <input id="saveNewInput" class="sbx-new-input" type="text" maxlength="60" placeholder="La mia playlist" autocomplete="off">
             <div class="sbx-new-actions">
                 <button id="saveNewCancel" class="no">Annulla</button>
                 <button id="saveNewOk" class="ok">Crea</button>
             </div>
+            <button id="saveNewDelete" class="hidden" style="width:100%;margin-top:14px;padding:10px;font-size:14px;font-weight:800;color:#ff6b6b;background:none;border:0;">Elimina playlist</button>
         </div>
     </div>
 
@@ -3495,13 +3500,14 @@
                 const vd = await this.visitorData();
                 const ctx = this.webContext(vd);
                 const headers = this.webHeaders(vd);
-                let r = await this.http(this.BROWSE_URL, 'POST', headers, { context: ctx, browseId: 'VL' + id });
+                const raw = String(id).indexOf('B:') === 0;
+                let r = await this.http(this.BROWSE_URL, 'POST', headers, { context: ctx, browseId: raw ? String(id).slice(2) : 'VL' + id });
                 let json = JSON.parse(r.data);
 
                 let title = '';
                 let thumb = null;
                 const heads = [];
-                ['musicResponsiveHeaderRenderer', 'musicDetailHeaderRenderer', 'musicEditablePlaylistDetailHeaderRenderer']
+                ['musicResponsiveHeaderRenderer', 'musicDetailHeaderRenderer', 'musicEditablePlaylistDetailHeaderRenderer', 'musicImmersiveHeaderRenderer']
                     .forEach((k) => this.collect(json, k, heads));
                 for (const h of heads) {
                     const body = h.header ? (h.header.musicDetailHeaderRenderer || h) : h;
@@ -3525,7 +3531,78 @@
                     token = this.findContinuationToken(scopes);
                     pages++;
                 }
+                if (raw && /^MPRE/.test(String(id).slice(2))) {
+                    // Album: le righe non hanno copertina propria e a volte al posto dell'artista c'e' il numero di riproduzioni
+                    let albumArtist = '';
+                    for (const h of heads) {
+                        const b = h.header ? (h.header.musicDetailHeaderRenderer || h) : h;
+                        const a = this.runsText(b.straplineTextOne) || ((b.subtitle && b.subtitle.runs) || [])
+                            .filter((x) => x.navigationEndpoint && x.navigationEndpoint.browseEndpoint && /^UC/.test(x.navigationEndpoint.browseEndpoint.browseId || ''))
+                            .map((x) => x.text).join(', ');
+                        if (a) { albumArtist = a; break; }
+                    }
+                    tracks.forEach((t) => {
+                        if (thumb) t.thumbnail = thumb;
+                        if (albumArtist && (!t.channel || /riproduzion|visualizz|plays|views|mln|mld/i.test(t.channel))) t.channel = albumArtist;
+                    });
+                }
                 return { title: title, thumb: thumb, tracks: tracks };
+            }
+        });
+
+        // ---- Suggerimenti della barra di ricerca (stessa richiesta di Echo Music: music/get_search_suggestions) ----
+        // Idea e struttura della risposta ispirate a Echo Music (https://github.com/EchoMusicApp/Echo-Music, GPL-3.0):
+        // YouTube Music restituisce due sezioni, i testi di ricerca suggeriti e alcuni risultati (brani, album, artisti, playlist).
+        Object.assign(NR, {
+            SUGGEST_URL: 'https://music.youtube.com/youtubei/v1/music/get_search_suggestions?prettyPrint=false',
+
+            parseSuggestionItem(r) {
+                const col0 = r.flexColumns && r.flexColumns[0] && r.flexColumns[0].musicResponsiveListItemFlexColumnRenderer;
+                const col1 = r.flexColumns && r.flexColumns[1] && r.flexColumns[1].musicResponsiveListItemFlexColumnRenderer;
+                const title = col0 ? this.runsText(col0.text) : '';
+                if (!title) return null;
+                const subRuns = (col1 && col1.text && col1.text.runs) || [];
+                const parts = subRuns.map((x) => x.text).filter((t) => t && t.trim() && t.trim() !== '\u2022');
+                if (parts.length && /^(brano|canzone|video|album|singolo|ep|artista|playlist|song|single|artist)$/i.test(parts[0].trim())) parts.shift();
+                const thumb = this.bestThumb(this.thumbsOf(r));
+                const nav = r.navigationEndpoint || {};
+                const videoId = (r.playlistItemData && r.playlistItemData.videoId) ||
+                    (nav.watchEndpoint && nav.watchEndpoint.videoId) ||
+                    (r.overlay && r.overlay.musicItemThumbnailOverlayRenderer && r.overlay.musicItemThumbnailOverlayRenderer.content &&
+                     r.overlay.musicItemThumbnailOverlayRenderer.content.musicPlayButtonRenderer &&
+                     r.overlay.musicItemThumbnailOverlayRenderer.content.musicPlayButtonRenderer.playNavigationEndpoint &&
+                     r.overlay.musicItemThumbnailOverlayRenderer.content.musicPlayButtonRenderer.playNavigationEndpoint.watchEndpoint &&
+                     r.overlay.musicItemThumbnailOverlayRenderer.content.musicPlayButtonRenderer.playNavigationEndpoint.watchEndpoint.videoId);
+                if (videoId) {
+                    const artists = subRuns.filter((x) => x.navigationEndpoint && x.navigationEndpoint.browseEndpoint &&
+                        /^UC/.test(x.navigationEndpoint.browseEndpoint.browseId || '')).map((x) => x.text);
+                    return { kind: 'song', id: videoId, title: title, sub: artists.length ? artists.join(', ') : (parts[0] || ''), thumb: thumb };
+                }
+                const bid = nav.browseEndpoint && nav.browseEndpoint.browseId;
+                if (!bid) return null;
+                if (/^UC/.test(bid)) return { kind: 'artist', id: bid, title: title, sub: 'Artista', thumb: thumb };
+                if (/^MPRE/.test(bid)) return { kind: 'album', id: bid, title: title, sub: 'Album' + (parts[0] ? ' \u00b7 ' + parts[0] : ''), thumb: thumb };
+                if (/^(VL|PL|RD)/.test(bid)) return { kind: 'playlist', id: bid.replace(/^VL/, ''), title: title, sub: 'Playlist' + (parts[0] ? ' \u00b7 ' + parts[0] : ''), thumb: thumb };
+                return null;
+            },
+
+            async searchSuggestions(query) {
+                const vd = await this.visitorData();
+                const r = await this.http(this.SUGGEST_URL, 'POST', this.webHeaders(vd), { context: this.webContext(vd), input: query });
+                const j = JSON.parse(r.data);
+                const queries = [];
+                const qs = [];
+                this.collect(j, 'searchSuggestionRenderer', qs);
+                qs.forEach((q) => { const t = this.runsText(q.suggestion); if (t && queries.indexOf(t) === -1) queries.push(t); });
+                const rows = [];
+                this.collect(j, 'musicResponsiveListItemRenderer', rows);
+                const items = [];
+                const seen = new Set();
+                for (const row of rows) {
+                    const it = this.parseSuggestionItem(row);
+                    if (it && !seen.has(it.kind + it.id)) { seen.add(it.kind + it.id); items.push(it); }
+                }
+                return { queries: queries, items: items };
             }
         });
 
@@ -4767,6 +4844,91 @@
                 };
             }
 
+            // Suggerimenti stile Echo Music (YouTube Music): brani, album, artisti, playlist + testi di ricerca suggeriti.
+            // Se la richiesta non da' niente (o non siamo nell'app Android) si torna ai suggerimenti Deezer di prima.
+            async function fetchSuggestions(query) {
+                const local = (typeof sbxSearchMyPlaylists === 'function') ? sbxSearchMyPlaylists(query) : [];
+                if (nativeHttp()) {
+                    try {
+                        const y = await NR.searchSuggestions(query);
+                        if (y && (y.items.length || y.queries.length)) return { mode: 'ytm', queries: y.queries, items: y.items, local };
+                    } catch (e) { console.warn('Suggerimenti YouTube Music non disponibili, uso Deezer:', e); }
+                }
+                const d = await fetchDeezerSuggestions(query);
+                d.mode = 'deezer';
+                return d;
+            }
+            function renderSuggestionsResult(res) {
+                if (res && res.mode === 'ytm') renderYtmSuggestions(res);
+                else renderSearchSuggestions(res.artists, res.tracks, res.albums, res.playlists);
+            }
+            async function openYtmArtist(it) {
+                // Come prima: la pagina artista di Sbixify (brani principali), trovata dal nome; altrimenti la pagina artista di YouTube Music
+                try {
+                    const a = await findExactDeezerArtist(it.title);
+                    if (a) { searchArtistPlaylist(a); return; }
+                } catch (e) {}
+                openYtmPlaylist(YTM_URL_PREFIX + 'B:' + it.id, false, { title: it.title, thumb: it.thumb });
+            }
+            function renderYtmSuggestions(res) {
+                if (!searchSuggestionsEl) return;
+                const local = (res.local || []).slice(0, 3);
+                const items = (res.items || []).slice(0, 8);
+                const queries = (res.queries || []).slice(0, 3);
+                if (!local.length && !items.length && !queries.length) { hideSearchSuggestions(); return; }
+                const bg = (u) => u ? `style="background-image:url('${String(u).replace(/'/g, "\\'")}')"` : '';
+                const rows = [];
+                local.forEach((p, i) => rows.push(`
+                    <div class="suggest-row is-playlist" data-kind="local" data-idx="${i}">
+                        <div class="suggest-thumb" ${bg(p.thumb)}>${p.thumb ? '' : '<i class="fa-solid fa-list"></i>'}</div>
+                        <div class="suggest-meta"><div class="suggest-title">${escapeHtml(p.title || '')}</div><div class="suggest-sub">Playlist${p.subtitle ? ' · ' + escapeHtml(p.subtitle) : ''}</div></div>
+                        <i class="fa-solid fa-chevron-right suggest-icon"></i>
+                    </div>`));
+                const cls = { song: 'is-track', album: 'is-album', artist: 'is-artist', playlist: 'is-playlist' };
+                const ico = { song: 'fa-music', album: 'fa-compact-disc', artist: 'fa-user', playlist: 'fa-list' };
+                items.forEach((it, i) => rows.push(`
+                    <div class="suggest-row ${cls[it.kind]}" data-kind="item" data-idx="${i}">
+                        <div class="suggest-thumb" ${bg(it.thumb)}>${it.thumb ? '' : `<i class="fa-solid ${ico[it.kind]}"></i>`}</div>
+                        <div class="suggest-meta"><div class="suggest-title">${escapeHtml(it.title)}</div><div class="suggest-sub">${escapeHtml(it.sub || '')}</div></div>
+                        <i class="fa-solid ${it.kind === 'song' ? 'fa-play' : 'fa-chevron-right'} suggest-icon"></i>
+                    </div>`));
+                queries.forEach((q, i) => rows.push(`
+                    <div class="suggest-row is-query" data-kind="query" data-idx="${i}">
+                        <div class="suggest-thumb"><i class="fa-solid fa-magnifying-glass"></i></div>
+                        <div class="suggest-meta"><div class="suggest-title">${escapeHtml(q)}</div></div>
+                        <i class="fa-solid fa-arrow-up suggest-icon" style="transform:rotate(-45deg)"></i>
+                    </div>`));
+                searchSuggestionsEl.innerHTML = rows.join('');
+                searchSuggestionsEl.classList.remove('hidden');
+                searchSuggestionsEl.querySelectorAll('.suggest-row').forEach((row) => {
+                    row.addEventListener('click', () => {
+                        hapticFeedback();
+                        const kind = row.dataset.kind, idx = parseInt(row.dataset.idx, 10);
+                        if (kind === 'query') {
+                            searchInput.value = queries[idx];
+                            performInlineYoutubeSearch(queries[idx]);
+                            return;
+                        }
+                        hideSearchSuggestions();
+                        searchInput.blur();
+                        searchInput.value = '';
+                        if (kind === 'local') { const p = local[idx]; openYtmPlaylist(YTM_URL_PREFIX + p.id, false, p); return; }
+                        const it = items[idx];
+                        if (!it) return;
+                        if (it.kind === 'song') {
+                            loadTrack(0, [{ id: it.id, title: it.title, channel: it.sub, thumbnail: it.thumb }]);
+                            openNowPlayingSheetWhenArtworkReady();
+                        } else if (it.kind === 'playlist') {
+                            openYtmPlaylist(YTM_URL_PREFIX + it.id, false, { title: it.title, thumb: it.thumb });
+                        } else if (it.kind === 'album') {
+                            openYtmPlaylist(YTM_URL_PREFIX + 'B:' + it.id, false, { title: it.title, thumb: it.thumb });
+                        } else if (it.kind === 'artist') {
+                            openYtmArtist(it);
+                        }
+                    });
+                });
+            }
+
             function renderSearchSuggestions(artists, tracks, albums = [], playlists = []) {
                 if (!searchSuggestionsEl) return;
                 playlists = (playlists || []).slice(0, 3);
@@ -4991,7 +5153,7 @@
                     const cacheKey = query.toLowerCase();
                     let result = suggestCache.get(cacheKey);
                     if (!result) {
-                        result = await fetchDeezerSuggestions(query);
+                        result = await fetchSuggestions(query);
                         if (myToken === suggestRequestToken) {
                             suggestCache.set(cacheKey, result);
                             // Cache volutamente piccola: qui basta coprire un rapido
@@ -5002,7 +5164,7 @@
                     // Se nel frattempo l'utente ha digitato altro (o la ricerca è già stata
                     // inviata) questo risultato non è più quello giusto: si scarta.
                     if (myToken !== suggestRequestToken || searchInput.value.trim() !== query) return;
-                    renderSearchSuggestions(result.artists, result.tracks, result.albums, result.playlists);
+                    renderSuggestionsResult(result);
                 }, 280);
             });
 
@@ -5010,7 +5172,7 @@
                 const query = searchInput.value.trim();
                 if (query.length >= 2 && suggestCache.has(query.toLowerCase())) {
                     const cached = suggestCache.get(query.toLowerCase());
-                    renderSearchSuggestions(cached.artists, cached.tracks, cached.albums, cached.playlists);
+                    renderSuggestionsResult(cached);
                 }
             });
 
@@ -6878,6 +7040,9 @@
             const btn = document.getElementById('refreshPlaylistBtn');
             if (!btn) return;
             btn.classList.toggle('hidden', !url);
+            // la matita "Rinomina" vale solo per le playlist create nell'app: la riaccende openMyPlaylist
+            const rn = document.getElementById('renamePlaylistBtn');
+            if (rn) rn.classList.add('hidden');
         }
 
         // --- AGGIORNAMENTO AUTOMATICO SETTIMANALE DELLE PLAYLIST ---
@@ -10825,6 +10990,8 @@
         var $ = function (id) { return document.getElementById(id); };
         var esc = function (s) { return (typeof escapeHtml === 'function') ? escapeHtml(String(s == null ? '' : s)) : String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); };
 
+        function toastMsg(m) { if (typeof showToast === 'function') showToast(m); }
+
         /* ---------------- archivio ---------------- */
         function likedList() { return { id: 'liked', name: 'Brani che ti piacciono', created: 0, updated: 0, tracks: [] }; }
         function load() {
@@ -10976,6 +11143,8 @@
                 renderTracklist(0);
             }
             updateRefreshPlaylistBtn(null);
+            var rb = $('renamePlaylistBtn');
+            if (rb) { rb.classList.toggle('hidden', id === 'liked'); rb.dataset.id = id; }
             if (!silent && l.tracks.length) addRecentItem({ name: l.name, type: 'playlist', url: url, artwork: listArtwork(l) });
         };
 
@@ -11006,7 +11175,7 @@
                     window.sbxOpenMyPlaylist(c.id);
                 });
                 if (c.kind === 'my' && c.id !== 'liked') {
-                    el.addEventListener('pointerdown', function () { fired = false; timer = setTimeout(function () { fired = true; if (typeof hapticFeedback === 'function') hapticFeedback(); if (confirm('Eliminare la playlist "' + c.name + '"?')) { var oo = load(); oo.lists = oo.lists.filter(function (x) { return x.id !== c.id; }); save(oo); renderMyPlaylists(); window.sbxRefreshAddButtons(); } }, 650); });
+                    el.addEventListener('pointerdown', function () { fired = false; timer = setTimeout(function () { fired = true; if (typeof hapticFeedback === 'function') hapticFeedback(); window.sbxRenamePlaylist(c.id); }, 650); });
                     ['pointerup', 'pointerleave', 'pointercancel'].forEach(function (ev) { el.addEventListener(ev, function () { if (timer) { clearTimeout(timer); timer = null; } }); });
                     el.addEventListener('contextmenu', function (e) { e.preventDefault(); });
                 }
@@ -11048,17 +11217,57 @@
                     renderSheet();
                 });
             });
-            $('saveNewBtn').addEventListener('click', function () { $('saveNewInput').value = ''; $('saveNewModal').classList.add('active'); setTimeout(function () { $('saveNewInput').focus(); }, 250); });
+            var renameId = null;
+            function openNameModal(id) {
+                renameId = id || null;
+                var l = id ? load().lists.find(function (x) { return x.id === id; }) : null;
+                $('saveNewTitle').textContent = id ? 'Rinomina playlist' : 'Dai un nome alla playlist';
+                $('saveNewOk').textContent = id ? 'Salva' : 'Crea';
+                $('saveNewDelete').classList.toggle('hidden', !id);
+                $('saveNewInput').value = l ? l.name : '';
+                $('saveNewModal').classList.add('active');
+                setTimeout(function () { $('saveNewInput').focus(); $('saveNewInput').select(); }, 250);
+            }
+            window.sbxRenamePlaylist = openNameModal;
+            $('saveNewBtn').addEventListener('click', function () { openNameModal(null); });
             $('saveNewCancel').addEventListener('click', function () { $('saveNewModal').classList.remove('active'); });
             $('saveNewModal').addEventListener('click', function (e) { if (e.target.id === 'saveNewModal') $('saveNewModal').classList.remove('active'); });
             function doCreate() {
-                var l = createList($('saveNewInput').value);
-                if (!l) return;
+                var name = ($('saveNewInput').value || '').trim();
+                if (!name) return;
+                if (renameId) {
+                    var o = load(), l = o.lists.find(function (x) { return x.id === renameId; });
+                    if (l) {
+                        l.name = name.slice(0, 60); l.updated = Date.now(); save(o);
+                        var rt = $('resultsTitle');
+                        if (typeof currentLoadedKey !== 'undefined' && currentLoadedKey === 'playlist:' + MY_PREFIX + l.id) {
+                            currentLoadedTitle = l.name;
+                            if (rt) rt.textContent = l.name;
+                            if (typeof addRecentItem === 'function') addRecentItem({ name: l.name, type: 'playlist', url: MY_PREFIX + l.id, artwork: listArtwork(l) });
+                        }
+                        renderMyPlaylists();
+                        toastMsg('Playlist rinominata');
+                    }
+                    $('saveNewModal').classList.remove('active');
+                    return;
+                }
+                var nl = createList(name);
+                if (!nl) return;
                 $('saveNewModal').classList.remove('active');
-                if (S) { S.initial[l.id] = false; S.staged[l.id] = true; renderSheet(); }
+                if (S) { S.initial[nl.id] = false; S.staged[nl.id] = true; renderSheet(); }
             }
             $('saveNewOk').addEventListener('click', doCreate);
             $('saveNewInput').addEventListener('keydown', function (e) { if (e.key === 'Enter') doCreate(); });
+            $('saveNewDelete').addEventListener('click', function () {
+                var l = load().lists.find(function (x) { return x.id === renameId; });
+                if (!l || !confirm('Eliminare la playlist "' + l.name + '"?')) return;
+                var o = load(); o.lists = o.lists.filter(function (x) { return x.id !== renameId; }); save(o);
+                $('saveNewModal').classList.remove('active');
+                renderMyPlaylists(); window.sbxRefreshAddButtons();
+                if (typeof currentLoadedKey !== 'undefined' && currentLoadedKey === 'playlist:' + MY_PREFIX + renameId) { var bb = $('backToHomeBtn'); if (bb) bb.click(); }
+            });
+            var rbtn = $('renamePlaylistBtn');
+            if (rbtn) rbtn.addEventListener('click', function () { if (typeof hapticFeedback === 'function') hapticFeedback(); openNameModal(rbtn.dataset.id); });
             renderMyPlaylists();
         }
         if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
