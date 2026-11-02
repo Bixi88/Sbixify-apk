@@ -657,6 +657,13 @@ public class NativeHttpPlugin extends Plugin {
         private String lastTrackKey = "";
         private volatile long lastExtSkipAt = 0;
         private volatile long nudgeUntil = 0;
+        // Ultimi dati davvero inviati alla MediaSession: servono a NON rimandare gli stessi metadati/stato
+        // ogni 3 secondi (certe autoradio, es. Uconnect, a ogni aggiornamento azzerano il minutaggio)
+        private String lastMetaKey = "";
+        private boolean lastSentPlaying = false;
+        private boolean stateEverSent = false;
+        private long lastSentPosMs = 0;
+        private long lastSentAt = 0;
         private final android.os.Handler mainHandler = new android.os.Handler(android.os.Looper.getMainLooper());
         private final Runnable restoreState = new Runnable() {
             @Override
@@ -664,7 +671,7 @@ public class NativeHttpPlugin extends Plugin {
                 synchronized (MediaService.this) {
                     nudgeUntil = 0;
                     try {
-                        session.setPlaybackState(buildState(current, false));
+                        pushState(current, false);
                     } catch (Exception ignored) {
                     }
                 }
@@ -917,7 +924,12 @@ public class NativeHttpPlugin extends Plugin {
             if (art != null) {
                 mb.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, art);
             }
-            session.setMetadata(mb.build());
+            String metaKey = info.title + "|" + info.artist + "|" + info.album + "|" + info.durationMs
+                    + "|" + (art != null);
+            if (!metaKey.equals(lastMetaKey)) {
+                lastMetaKey = metaKey;
+                session.setMetadata(mb.build());
+            }
 
             // Alcune autoradio (es. Uconnect) rileggono titolo e artista solo quando cambia lo STATO di
             // riproduzione (play/pausa), non quando cambiano soltanto i metadati: per questo cambiando brano
@@ -938,7 +950,29 @@ public class NativeHttpPlugin extends Plugin {
                 mainHandler.removeCallbacks(restoreState);
                 mainHandler.postDelayed(restoreState, 600);
             }
-            session.setPlaybackState(buildState(info, now < nudgeUntil));
+            pushState(info, now < nudgeUntil);
+        }
+
+        /**
+         * Aggiorna lo stato di riproduzione solo se e' cambiato davvero (play/pausa) o se la posizione si e'
+         * spostata rispetto a quella che il sistema estrapola da solo (seek). Il semplice scorrere del tempo
+         * NON va rimandato: la MediaSession lo calcola da posizione + velocita' 1.0.
+         */
+        private void pushState(MediaInfo info, boolean forcePaused) {
+            boolean playing = info.playing && !forcePaused;
+            long now = android.os.SystemClock.elapsedRealtime();
+            long expected = lastSentPosMs + (lastSentPlaying ? (now - lastSentAt) : 0);
+            boolean send = !stateEverSent
+                    || playing != lastSentPlaying
+                    || Math.abs(info.positionMs - expected) > 2500;
+            if (!send) {
+                return;
+            }
+            stateEverSent = true;
+            lastSentPlaying = playing;
+            lastSentPosMs = info.positionMs;
+            lastSentAt = now;
+            session.setPlaybackState(buildState(info, forcePaused));
         }
 
         private PlaybackState buildState(MediaInfo info, boolean forcePaused) {
