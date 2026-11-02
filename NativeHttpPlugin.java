@@ -664,6 +664,9 @@ public class NativeHttpPlugin extends Plugin {
         private boolean stateEverSent = false;
         private long lastSentPosMs = 0;
         private long lastSentAt = 0;
+        // Dopo una pausa dall'auto, per un attimo ignoriamo eventuali aggiornamenti "playing" ancora in volo
+        // dalla pagina (non ha ancora fatto in tempo a fermarsi): altrimenti l'auto torna a "play" e il minutaggio riparte
+        private volatile long pauseHoldUntil = 0;
         private final android.os.Handler mainHandler = new android.os.Handler(android.os.Looper.getMainLooper());
         // Certe autoradio (Uconnect) ignorano il primo aggiornamento di pausa: lo ribadiamo un paio di volte
         private final Runnable reassertPause = new Runnable() {
@@ -758,6 +761,7 @@ public class NativeHttpPlugin extends Plugin {
                             lastSentPosMs = pos;
                             lastSentAt = now;
                             stateEverSent = true;
+                            pauseHoldUntil = now + 2500;
                             long acts = PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PAUSE | PlaybackState.ACTION_PLAY_PAUSE
                                     | PlaybackState.ACTION_SKIP_TO_NEXT | PlaybackState.ACTION_SKIP_TO_PREVIOUS
                                     | PlaybackState.ACTION_SEEK_TO;
@@ -1002,8 +1006,8 @@ public class NativeHttpPlugin extends Plugin {
          * NON va rimandato: la MediaSession lo calcola da posizione + velocita' 1.0.
          */
         private void pushState(MediaInfo info, boolean forcePaused) {
-            boolean playing = info.playing && !forcePaused;
             long now = android.os.SystemClock.elapsedRealtime();
+            boolean playing = info.playing && !forcePaused && now >= pauseHoldUntil;
             long expected = lastSentPosMs + (lastSentPlaying ? (now - lastSentAt) : 0);
             boolean send = !stateEverSent
                     || playing != lastSentPlaying
@@ -1015,7 +1019,7 @@ public class NativeHttpPlugin extends Plugin {
             lastSentPlaying = playing;
             lastSentPosMs = info.positionMs;
             lastSentAt = now;
-            session.setPlaybackState(buildState(info, forcePaused));
+            session.setPlaybackState(buildState(info, !playing));
         }
 
         private PlaybackState buildState(MediaInfo info, boolean forcePaused) {
