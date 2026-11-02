@@ -1955,7 +1955,13 @@
             set playbackState(v) { playbackState = v; info.playing = (v === 'playing'); schedule(true); },
             setActionHandler: function (action, fn) { if (fn) handlers[action] = fn; else delete handlers[action]; },
             setPositionState: function (s) {
-                if (s) { info.position = s.position || 0; info.duration = s.duration || 0; }
+                if (s) {
+                    var hadDur = info.duration > 0;
+                    info.position = s.position || 0;
+                    info.duration = s.duration || 0;
+                    // prima durata valida del brano: la mando subito, senza aspettare i 3 secondi
+                    if (!hadDur && info.duration > 0) { schedule(true); return; }
+                }
                 schedule(false);
             },
             setMicrophoneActive: function () {},
