@@ -4469,8 +4469,8 @@
                 setPlayIconState(true);
                 updateDuration(); 
                 applyPendingSeekIfReady();
+                updateMediaSessionPosition();   // prima la posizione, poi lo stato: lo stato parte subito e deve portare il minutaggio giusto
                 updateMediaSessionState(true);
-                updateMediaSessionPosition();
                 syncKeepAlive(true);
                 scheduleQualityUpgrade();
                 // Il video è partito muto per aggirare il blocco autoplay-con-audio dei
@@ -4488,8 +4488,8 @@
             } else if (event.data == PS.PAUSED) {
                 appState.isPlaying = false;
                 setPlayIconState(false);
+                updateMediaSessionPosition();   // prima la posizione esatta, poi lo stato di pausa (che parte subito): l'auto si ferma sul secondo giusto
                 updateMediaSessionState(false);
-                updateMediaSessionPosition();
                 syncKeepAlive(false);
             } else if (event.data == PS.ENDED) {
                 appState.isPlaying = false;

@@ -665,6 +665,23 @@ public class NativeHttpPlugin extends Plugin {
         private long lastSentPosMs = 0;
         private long lastSentAt = 0;
         private final android.os.Handler mainHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+        // Certe autoradio (Uconnect) ignorano il primo aggiornamento di pausa: lo ribadiamo un paio di volte
+        private final Runnable reassertPause = new Runnable() {
+            @Override
+            public void run() {
+                synchronized (MediaService.this) {
+                    try {
+                        if (current != null && !current.playing && session != null) {
+                            lastSentPlaying = false;
+                            lastSentPosMs = current.positionMs;
+                            lastSentAt = android.os.SystemClock.elapsedRealtime();
+                            session.setPlaybackState(buildState(current, false));
+                        }
+                    } catch (Exception ignored) {
+                    }
+                }
+            }
+        };
         private final Runnable restoreState = new Runnable() {
             @Override
             public void run() {
@@ -728,6 +745,27 @@ public class NativeHttpPlugin extends Plugin {
 
                 @Override
                 public void onPause() {
+                    // Pausa dall'auto: mostriamo SUBITO lo stato di pausa (posizione estrapolata) invece di
+                    // aspettare che la pagina web risponda, cosi' Uconnect smette di far correre il minutaggio
+                    try {
+                        synchronized (MediaService.this) {
+                            long now = android.os.SystemClock.elapsedRealtime();
+                            long pos = lastSentPosMs + (lastSentPlaying ? (now - lastSentAt) : 0);
+                            if (current != null && current.durationMs > 0 && pos > current.durationMs) {
+                                pos = current.durationMs;
+                            }
+                            lastSentPlaying = false;
+                            lastSentPosMs = pos;
+                            lastSentAt = now;
+                            stateEverSent = true;
+                            long acts = PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PAUSE | PlaybackState.ACTION_PLAY_PAUSE
+                                    | PlaybackState.ACTION_SKIP_TO_NEXT | PlaybackState.ACTION_SKIP_TO_PREVIOUS
+                                    | PlaybackState.ACTION_SEEK_TO;
+                            session.setPlaybackState(new PlaybackState.Builder().setActions(acts)
+                                    .setState(PlaybackState.STATE_PAUSED, pos, 0f).build());
+                        }
+                    } catch (Exception ignored) {
+                    }
                     send("ext_pause", 0);
                 }
 
@@ -880,6 +918,11 @@ public class NativeHttpPlugin extends Plugin {
         synchronized void apply(MediaInfo info) {
             current = info;
             updateSession(info);
+            mainHandler.removeCallbacks(reassertPause);
+            if (!info.playing) {
+                mainHandler.postDelayed(reassertPause, 1200);
+                mainHandler.postDelayed(reassertPause, 3500);
+            }
             ensureArt(info.artwork);
             Notification n = buildNotification(info);
             if (info.playing) {
