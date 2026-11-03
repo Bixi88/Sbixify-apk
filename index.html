@@ -3673,6 +3673,7 @@
                 this._resumeAt = null; this._watchdog = null;
                 this._vol = 1; this._muted = false;
                 this._tok = 0; this._resolving = false;
+                this._released = null; this._relTimer = null;   // flusso audio rilasciato dopo la pausa (vedi _release)
 
                 a.addEventListener('playing', () => {
                     if (this.mode !== 'audio') return;
@@ -3745,7 +3746,29 @@
                 this.a.load();
             }
 
+            // Dopo una pausa nell'app Android liberiamo del tutto il flusso audio del WebView: finche' resta
+            // aperto Android lo considera ancora "in riproduzione" e le autoradio (Uconnect) continuano a far
+            // correre il minutaggio per ~10 secondi. Posizione e URL restano salvati: al play si riparte da li'.
+            _scheduleRelease() {
+                clearTimeout(this._relTimer);
+                if (!nativeHttp()) return;
+                this._relTimer = setTimeout(() => this._release(), 500);
+            }
+            _release() {
+                const a = this.a;
+                if (this.mode !== 'audio' || this._wantPlay || this._resolving || this._released) return;
+                if (!a.getAttribute('src') || !a.paused || a.ended) return;
+                this._released = {
+                    src: a.getAttribute('src'),
+                    pos: a.currentTime || 0,
+                    dur: Number.isFinite(a.duration) ? a.duration : 0
+                };
+                a.removeAttribute('src');
+                a.load();
+            }
+
             _start(id, autoplay, startSec) {
+                clearTimeout(this._relTimer); this._released = null;
                 clearTimeout(this._watchdog);
                 this._startSec = startSec > 0 ? startSec : 0;
                 if (this.mode === 'yt' && this.yt && this.ytReady) { try { this.yt.stopVideo(); } catch (e) {} }
@@ -3816,7 +3839,7 @@
                 if (this._started && this._retries < 2) {
                     // Errore a metà brano (URL scaduto, rete): rigenera l'URL e riprende da dove era
                     this._retries++;
-                    this._setSrc(this.vid, this._tok, this.a.currentTime || 0, true);
+                    this._setSrc(this.vid, this._tok, (this._resumeAt != null ? this._resumeAt : this.a.currentTime) || 0, true);
                     return;
                 }
                 const tok = this._tok;
@@ -3889,7 +3912,16 @@
             playVideo() {
                 if (this.mode === 'yt') { this._y('playVideo'); return; }
                 this._wantPlay = true;
+                clearTimeout(this._relTimer);
                 if (this._resolving) return;             // lo stream sta arrivando: partirà da solo
+                if (this._released) {                    // flusso rilasciato dopo la pausa: lo riapriamo dalla stessa posizione
+                    const r = this._released; this._released = null;
+                    this._resumeAt = r.pos;
+                    this.a.preload = 'auto';
+                    this.a.src = r.src;
+                    const pr = this.a.play(); if (pr && pr.catch) pr.catch(() => {});
+                    return;
+                }
                 if (this.a.getAttribute('src')) { const p = this.a.play(); if (p && p.catch) p.catch(() => {}); }
                 else if (this.vid) this._start(this.vid, true);
             }
@@ -3897,10 +3929,12 @@
                 if (this.mode === 'yt') { this._y('pauseVideo'); return; }
                 this._wantPlay = false;
                 this.a.pause();
+                this._scheduleRelease();
             }
             stopVideo() {
                 if (this.mode === 'yt') { this._y('stopVideo'); return; }
                 this._wantPlay = false;
+                clearTimeout(this._relTimer); this._released = null;
                 this._tok++;
                 this._resolving = false;
                 clearTimeout(this._watchdog);
@@ -3908,12 +3942,14 @@
             }
             seekTo(sec) {
                 if (this.mode === 'yt') { this._y('seekTo', undefined, sec, true); return; }
+                if (this._released) { this._released.pos = Math.max(0, sec); return; }
                 if (!this.a.getAttribute('src')) return;
                 try { this.a.currentTime = Math.max(0, sec); } catch (e) {}
             }
-            getCurrentTime() { return this.mode === 'yt' ? (this._y('getCurrentTime', 0) || 0) : (this.a.currentTime || 0); }
+            getCurrentTime() { return this.mode === 'yt' ? (this._y('getCurrentTime', 0) || 0) : (this._released ? this._released.pos : (this.a.currentTime || 0)); }
             getDuration() {
                 if (this.mode === 'yt') return this._y('getDuration', 0) || 0;
+                if (this._released) return this._released.dur;
                 return Number.isFinite(this.a.duration) ? this.a.duration : 0;
             }
             getVideoData() { return this.mode === 'yt' ? (this._y('getVideoData', { video_id: this.vid }) || { video_id: this.vid }) : { video_id: this.vid }; }
@@ -4442,6 +4478,7 @@
                 ka.play().catch(() => {}); // ignora eventuali blocchi autoplay: a quel punto riparte comunque al prossimo togglePlay
             } else {
                 ka.pause();
+                try { ka.load(); } catch (e) {}   // libera anche il flusso silenzioso
             }
         }
 
