@@ -579,6 +579,415 @@ public class NativeHttpPlugin extends Plugin {
         }
     }
 
+    // =====================================================================================
+    // Player audio NATIVO (android.media.MediaPlayer). Come in Echo/Spotify l'audio non esce piu' dal
+    // WebView: pausa e stato di riproduzione sono immediati e arrivano subito all'autoradio.
+    // La pagina web parla con questo player tramite un finto <audio> (NativeAudioElement in index.html).
+    // =====================================================================================
+    static volatile NativeHttpPlugin audioInst;
+    private android.media.MediaPlayer mp;
+    private int mpGen = 0;
+    private boolean mpPrepared = false;
+    private boolean mpWantPlay = false;
+    private boolean mpStarted = false;
+    private boolean mpEnded = false;
+    private int mpStartMs = 0;
+    private boolean mpResumeOnFocus = false;
+    private boolean mpDucked = false;
+    private float mpVol = 1f;
+    private boolean mpMuted = false;
+    private android.media.AudioManager mpAm;
+    private android.media.AudioFocusRequest mpFocusReq;
+    private final android.os.Handler mpHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable mpTick = new Runnable() {
+        @Override
+        public void run() {
+            try {
+                if (mp != null && mpStarted) {
+                    emitAudio("tick", 0, 0);
+                    mpHandler.postDelayed(this, 1000);
+                }
+            } catch (Exception ignored) {
+            }
+        }
+    };
+    private final android.media.AudioManager.OnAudioFocusChangeListener mpFocusListener =
+            new android.media.AudioManager.OnAudioFocusChangeListener() {
+                @Override
+                public void onAudioFocusChange(int change) {
+                    try {
+                        if (change == android.media.AudioManager.AUDIOFOCUS_LOSS) {
+                            mpResumeOnFocus = false;
+                            mpPauseNow(true);
+                        } else if (change == android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
+                            if (mpStarted) {
+                                mpResumeOnFocus = true;
+                                mpPauseNow(true);
+                            }
+                        } else if (change == android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK) {
+                            mpDucked = true;
+                            mpApplyVolume();
+                        } else if (change == android.media.AudioManager.AUDIOFOCUS_GAIN) {
+                            mpDucked = false;
+                            mpApplyVolume();
+                            if (mpResumeOnFocus) {
+                                mpResumeOnFocus = false;
+                                mpWantPlay = true;
+                                mpStartPlayback();
+                            }
+                        }
+                    } catch (Exception ignored) {
+                    }
+                }
+            };
+
+    private void emitAudio(String ev, int what, int extra) {
+        try {
+            JSObject o = new JSObject();
+            o.put("ev", ev);
+            o.put("gen", mpGen);
+            double pos = 0;
+            double dur = -1;
+            if (mp != null && mpPrepared) {
+                try {
+                    pos = mp.getCurrentPosition() / 1000.0;
+                    int d = mp.getDuration();
+                    if (d > 0) {
+                        dur = d / 1000.0;
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+            o.put("pos", pos);
+            o.put("dur", dur);
+            o.put("playing", mpStarted);
+            o.put("what", what);
+            o.put("extra", extra);
+            notifyListeners("nativeAudio", o);
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void mpApplyVolume() {
+        try {
+            if (mp != null) {
+                float v = mpMuted ? 0f : mpVol;
+                if (mpDucked) {
+                    v = v * 0.25f;
+                }
+                mp.setVolume(v, v);
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private boolean mpRequestFocus() {
+        try {
+            if (mpAm == null) {
+                mpAm = (android.media.AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
+            }
+            if (mpAm == null) {
+                return true;
+            }
+            int r;
+            if (Build.VERSION.SDK_INT >= 26) {
+                if (mpFocusReq == null) {
+                    android.media.AudioAttributes attrs = new android.media.AudioAttributes.Builder()
+                            .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                            .build();
+                    mpFocusReq = new android.media.AudioFocusRequest.Builder(android.media.AudioManager.AUDIOFOCUS_GAIN)
+                            .setAudioAttributes(attrs)
+                            .setOnAudioFocusChangeListener(mpFocusListener, mpHandler)
+                            .build();
+                }
+                r = mpAm.requestAudioFocus(mpFocusReq);
+            } else {
+                r = mpAm.requestAudioFocus(mpFocusListener, android.media.AudioManager.STREAM_MUSIC,
+                        android.media.AudioManager.AUDIOFOCUS_GAIN);
+            }
+            return r == android.media.AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+        } catch (Exception e) {
+            return true;
+        }
+    }
+
+    private void mpAbandonFocus() {
+        try {
+            if (mpAm == null) {
+                return;
+            }
+            if (Build.VERSION.SDK_INT >= 26) {
+                if (mpFocusReq != null) {
+                    mpAm.abandonAudioFocusRequest(mpFocusReq);
+                }
+            } else {
+                mpAm.abandonAudioFocus(mpFocusListener);
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void mpReleasePlayer() {
+        mpHandler.removeCallbacks(mpTick);
+        android.media.MediaPlayer p = mp;
+        mp = null;
+        mpPrepared = false;
+        mpStarted = false;
+        mpWantPlay = false;
+        if (p != null) {
+            try {
+                p.setOnPreparedListener(null);
+                p.setOnCompletionListener(null);
+                p.setOnErrorListener(null);
+                p.setOnInfoListener(null);
+                p.setOnSeekCompleteListener(null);
+            } catch (Exception ignored) {
+            }
+            try {
+                p.reset();
+            } catch (Exception ignored) {
+            }
+            try {
+                p.release();
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private void mpStartPlayback() {
+        try {
+            if (mp == null || !mpPrepared) {
+                return;
+            }
+            mpRequestFocus();
+            if (mpEnded) {
+                mp.seekTo(0);
+                mpEnded = false;
+            }
+            mp.start();
+            mpStarted = true;
+            emitAudio("playing", 0, 0);
+            mpHandler.removeCallbacks(mpTick);
+            mpHandler.postDelayed(mpTick, 1000);
+        } catch (Exception e) {
+            mpStarted = false;
+            emitAudio("error", -1, 0);
+        }
+    }
+
+    /** Pausa vera del player + stato di pausa SUBITO alla MediaSession (senza passare dalla pagina web). */
+    private void mpPauseNow(boolean notifyPage) {
+        try {
+            mpWantPlay = false;
+            mpHandler.removeCallbacks(mpTick);
+            if (mp != null && mpPrepared && mpStarted) {
+                mp.pause();
+                mpStarted = false;
+                long posMs = 0;
+                try {
+                    posMs = mp.getCurrentPosition();
+                } catch (Exception ignored) {
+                }
+                MediaService.nativePlayState(false, posMs);
+                if (notifyPage) {
+                    emitAudio("pause", 0, 0);
+                }
+            } else {
+                mpStarted = false;
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** Chiamato dalla MediaSession quando l'auto/Bluetooth/notifica mandano PAUSA: ferma l'audio subito. */
+    static void audioPauseFromSession() {
+        final NativeHttpPlugin i = audioInst;
+        if (i == null) {
+            return;
+        }
+        i.mpHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                i.mpPauseNow(true);
+            }
+        });
+    }
+
+    @PluginMethod
+    public void audioLoad(final PluginCall call) {
+        final String url = call.getString("url", "");
+        final int gen = call.getInt("gen", 0);
+        final int startMs = (int) Math.round(call.getDouble("startSec", 0.0) * 1000.0);
+        audioInst = this;
+        mpHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    mpReleasePlayer();
+                    mpGen = gen;
+                    mpEnded = false;
+                    mpStartMs = startMs;
+                    mpResumeOnFocus = false;
+                    final android.media.MediaPlayer p = new android.media.MediaPlayer();
+                    mp = p;
+                    p.setAudioAttributes(new android.media.AudioAttributes.Builder()
+                            .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                            .build());
+                    mpApplyVolume();
+                    p.setOnPreparedListener(new android.media.MediaPlayer.OnPreparedListener() {
+                        @Override
+                        public void onPrepared(android.media.MediaPlayer m) {
+                            if (m != mp) {
+                                return;
+                            }
+                            mpPrepared = true;
+                            try {
+                                if (mpStartMs > 0) {
+                                    m.seekTo(mpStartMs);
+                                }
+                            } catch (Exception ignored) {
+                            }
+                            emitAudio("loadedmetadata", 0, 0);
+                            if (mpWantPlay) {
+                                mpStartPlayback();
+                            }
+                        }
+                    });
+                    p.setOnCompletionListener(new android.media.MediaPlayer.OnCompletionListener() {
+                        @Override
+                        public void onCompletion(android.media.MediaPlayer m) {
+                            if (m != mp) {
+                                return;
+                            }
+                            mpStarted = false;
+                            mpEnded = true;
+                            mpHandler.removeCallbacks(mpTick);
+                            emitAudio("ended", 0, 0);
+                        }
+                    });
+                    p.setOnErrorListener(new android.media.MediaPlayer.OnErrorListener() {
+                        @Override
+                        public boolean onError(android.media.MediaPlayer m, int what, int extra) {
+                            if (m != mp) {
+                                return true;
+                            }
+                            mpPrepared = false;
+                            mpStarted = false;
+                            mpHandler.removeCallbacks(mpTick);
+                            emitAudio("error", what, extra);
+                            return true;
+                        }
+                    });
+                    p.setOnInfoListener(new android.media.MediaPlayer.OnInfoListener() {
+                        @Override
+                        public boolean onInfo(android.media.MediaPlayer m, int what, int extra) {
+                            if (m != mp) {
+                                return true;
+                            }
+                            if (what == android.media.MediaPlayer.MEDIA_INFO_BUFFERING_START) {
+                                emitAudio("waiting", 0, 0);
+                            } else if (what == android.media.MediaPlayer.MEDIA_INFO_BUFFERING_END && mpStarted) {
+                                emitAudio("playing", 0, 0);
+                            }
+                            return true;
+                        }
+                    });
+                    p.setOnSeekCompleteListener(new android.media.MediaPlayer.OnSeekCompleteListener() {
+                        @Override
+                        public void onSeekComplete(android.media.MediaPlayer m) {
+                            if (m != mp) {
+                                return;
+                            }
+                            emitAudio("tick", 0, 0);
+                        }
+                    });
+                    p.setDataSource(url);
+                    p.prepareAsync();
+                } catch (Exception e) {
+                    emitAudio("error", -2, 0);
+                }
+            }
+        });
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void audioPlay(PluginCall call) {
+        audioInst = this;
+        mpHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                mpWantPlay = true;
+                if (mp != null && mpPrepared && !mpStarted) {
+                    mpStartPlayback();
+                }
+            }
+        });
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void audioPause(PluginCall call) {
+        audioInst = this;
+        mpHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                mpResumeOnFocus = false;
+                mpPauseNow(false);
+            }
+        });
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void audioSeek(PluginCall call) {
+        final int ms = (int) Math.round(call.getDouble("sec", 0.0) * 1000.0);
+        mpHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    if (mp != null && mpPrepared) {
+                        mp.seekTo(ms);
+                        mpEnded = false;
+                    } else {
+                        mpStartMs = ms;
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+        });
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void audioVolume(PluginCall call) {
+        final double v = call.getDouble("vol", 1.0);
+        final boolean muted = Boolean.TRUE.equals(call.getBoolean("muted", false));
+        mpHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                mpVol = (float) Math.max(0.0, Math.min(1.0, v));
+                mpMuted = muted;
+                mpApplyVolume();
+            }
+        });
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void audioStop(PluginCall call) {
+        mpHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                mpReleasePlayer();
+                mpAbandonFocus();
+            }
+        });
+        call.resolve();
+    }
+
     @PluginMethod
     public void setMediaInfo(PluginCall call) {
         try {
@@ -678,6 +1087,26 @@ public class NativeHttpPlugin extends Plugin {
             }
         };
 
+        /** Il player nativo e' andato in pausa/play: aggiorna subito la MediaSession (posizione esatta, velocita' 0). */
+        static void nativePlayState(boolean playing, long posMs) {
+            MediaService s = instance;
+            if (s == null) {
+                return;
+            }
+            synchronized (s) {
+                MediaInfo c = s.current;
+                MediaInfo n = new MediaInfo();
+                n.title = c.title;
+                n.artist = c.artist;
+                n.album = c.album;
+                n.artwork = c.artwork;
+                n.durationMs = c.durationMs;
+                n.playing = playing;
+                n.positionMs = posMs;
+                s.apply(n);
+            }
+        }
+
         static void submit(Context ctx, MediaInfo info) {
             pending = info;
             MediaService s = instance;
@@ -728,6 +1157,7 @@ public class NativeHttpPlugin extends Plugin {
 
                 @Override
                 public void onPause() {
+                    NativeHttpPlugin.audioPauseFromSession();   // audio fermo subito, senza aspettare la pagina web
                     send("ext_pause", 0);
                 }
 

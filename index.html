@@ -3661,9 +3661,96 @@
             });
         });
 
+        // Finto <audio> che pilota il player NATIVO di Android (MediaPlayer, vedi NativeHttpPlugin.java):
+        // espone solo la parte di HTMLAudioElement che usa HybridPlayer. Gli eventi (playing, pause, ended...)
+        // arrivano dal telefono, cosi' lo stato di riproduzione e' quello vero, come nelle app musicali native.
+        class NativeAudioElement {
+            constructor(np) {
+                this._np = np; this._l = {}; this._src = ''; this._gen = 0;
+                this._pos = 0; this._posAt = 0; this._dur = NaN;
+                this._playing = false; this._wantPlay = false; this._ended = false; this._err = null;
+                this._vol = 1; this._muted = false; this.preload = 'auto'; this._startAt = 0;
+                try { np.addListener('nativeAudio', (e) => this._onNative(e)); } catch (e) {}
+            }
+            addEventListener(t, f) { (this._l[t] = this._l[t] || []).push(f); }
+            removeEventListener(t, f) { const a = this._l[t]; if (a) { const i = a.indexOf(f); if (i >= 0) a.splice(i, 1); } }
+            _fire(t) { (this._l[t] || []).slice().forEach((f) => { try { f({ type: t, target: this }); } catch (e) {} }); }
+            _fireLater(t) { setTimeout(() => this._fire(t), 0); }
+            _call(m, arg) { try { const p = this._np[m](arg); if (p && p.catch) p.catch(() => {}); } catch (e) {} }
+            setAttribute() {}
+            getAttribute(n) { return (n === 'src' && this._src) ? this._src : null; }
+            removeAttribute(n) { if (n === 'src') this._src = ''; }
+            canPlayType() { return ''; }          // formato scelto: m4a (AAC), lo legge qualsiasi telefono
+            get src() { return this._src; }
+            set src(u) {
+                this._gen++;
+                this._src = String(u || '');
+                this._ended = false; this._playing = false; this._err = null;
+                this._pos = this._startAt || 0; this._posAt = Date.now(); this._dur = NaN; this._startAt = 0;
+                if (!this._src) { this._call('audioStop'); return; }
+                this._fire('loadstart');
+                this._call('audioLoad', { url: this._src, gen: this._gen, startSec: this._pos });
+            }
+            load() {
+                if (!this._src) {
+                    this._gen++; this._playing = false; this._wantPlay = false; this._dur = NaN; this._pos = 0;
+                    this._call('audioStop');
+                }
+            }
+            play() { this._wantPlay = true; this._call('audioPlay'); return Promise.resolve(); }
+            pause() {
+                const was = this._wantPlay || this._playing;
+                this._pos = this.currentTime; this._posAt = Date.now();
+                this._wantPlay = false; this._playing = false;
+                this._call('audioPause');
+                if (was) this._fireLater('pause');
+            }
+            get paused() { return !this._wantPlay; }
+            get ended() { return this._ended; }
+            get duration() { return this._dur; }
+            get error() { return this._err; }
+            get readyState() { return this._dur > 0 ? 4 : 0; }
+            get networkState() { return 2; }
+            get buffered() { return { length: 0 }; }
+            get currentTime() {
+                let p = this._pos;
+                if (this._playing) p += (Date.now() - this._posAt) / 1000;
+                if (this._dur > 0 && p > this._dur) p = this._dur;
+                return p < 0 ? 0 : p;
+            }
+            set currentTime(t) {
+                t = Math.max(0, Number(t) || 0);
+                if (Math.abs(t - this.currentTime) < 0.3) return;
+                this._pos = t; this._posAt = Date.now();
+                this._call('audioSeek', { sec: t });
+            }
+            get volume() { return this._vol; }
+            set volume(v) { this._vol = v; this._call('audioVolume', { vol: v, muted: this._muted }); }
+            get muted() { return this._muted; }
+            set muted(m) { this._muted = !!m; this._call('audioVolume', { vol: this._vol, muted: this._muted }); }
+            _onNative(e) {
+                if (!e || e.gen !== this._gen) return;
+                if (typeof e.pos === 'number') { this._pos = e.pos; this._posAt = Date.now(); }
+                if (typeof e.dur === 'number' && e.dur > 0) this._dur = e.dur;
+                switch (e.ev) {
+                    case 'loadedmetadata': this._fire('loadedmetadata'); this._fire('canplay'); break;
+                    case 'playing': this._playing = true; this._wantPlay = true; this._fire('playing'); break;
+                    case 'pause':
+                        if (!this._wantPlay && !this._playing) return;   // pausa gia' decisa dalla pagina
+                        this._playing = false; this._wantPlay = false; this._fire('pause'); break;
+                    case 'waiting': this._fire('waiting'); break;
+                    case 'ended': this._playing = false; this._ended = true; this._fire('ended'); break;
+                    case 'error': this._playing = false; this._err = { code: 4 }; this._fire('error'); break;
+                }
+            }
+        }
+
         class HybridPlayer {
             constructor() {
-                const a = this.a = new Audio();
+                let useNativeAudio = false;
+                try { const np0 = nativeHttp(); useNativeAudio = !!(np0 && np0.audioLoad && np0.addListener) && localStorage.getItem('sbxNativeAudio') !== '0'; } catch (e) {}
+                const a = this.a = useNativeAudio ? new NativeAudioElement(nativeHttp()) : new Audio();
+                this._native = useNativeAudio;
                 a.setAttribute('playsinline', '');
                 this.mode = 'audio';            // 'audio' (nativo o Worker) | 'yt' (ripiego IFrame)
                 this.vid = '';
@@ -3751,7 +3838,7 @@
             // correre il minutaggio. Posizione e URL restano salvati: al play si riparte da li'.
             _scheduleRelease() {
                 clearTimeout(this._relTimer);
-                if (!nativeHttp()) return;
+                if (!nativeHttp() || this._native) return;   // col player nativo non serve
                 this._relTimer = setTimeout(() => this._release(), 500);
             }
             _release() {
@@ -3807,6 +3894,7 @@
                     if (this._tok !== tok || this.mode !== 'audio') return;
                     this._resumeAt = resumeAt;
                     a.preload = this._wantPlay ? 'auto' : 'metadata';
+                    a._startAt = resumeAt > 0 ? resumeAt : 0;   // solo player nativo: parte gia' dalla posizione giusta
                     a.src = url;
                     a.volume = this._vol;
                     a.muted = this._muted;
