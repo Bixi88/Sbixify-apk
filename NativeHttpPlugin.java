@@ -814,6 +814,123 @@ public class NativeHttpPlugin extends Plugin {
         });
     }
 
+    // Brano corrente (serve a riaprirlo se lo stream si interrompe a meta' dopo un salto nella barra)
+    private String mpUrl = "";
+    private int mpSeekMs = -1;
+    private long mpSeekAt = 0;
+    private int mpReopens = 0;
+
+    /** Apre (o riapre) il brano nel player. Da chiamare sul thread principale. */
+    private void mpOpen(final String url, final int gen, final int startMs, final boolean wantPlay) {
+        try {
+            mpReleasePlayer();
+            mpUrl = url;
+            mpGen = gen;
+            mpEnded = false;
+            mpStartMs = startMs;
+            mpWantPlay = wantPlay;
+            mpResumeOnFocus = false;
+            final android.media.MediaPlayer p = new android.media.MediaPlayer();
+            mp = p;
+            p.setAudioAttributes(new android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build());
+            mpApplyVolume();
+            p.setOnPreparedListener(new android.media.MediaPlayer.OnPreparedListener() {
+                @Override
+                public void onPrepared(android.media.MediaPlayer m) {
+                    if (m != mp) {
+                        return;
+                    }
+                    mpPrepared = true;
+                    try {
+                        if (mpStartMs > 0) {
+                            m.seekTo(mpStartMs);
+                        }
+                    } catch (Exception ignored) {
+                    }
+                    emitAudio("loadedmetadata", 0, 0);
+                    if (mpWantPlay) {
+                        mpStartPlayback();
+                    }
+                }
+            });
+            p.setOnCompletionListener(new android.media.MediaPlayer.OnCompletionListener() {
+                @Override
+                public void onCompletion(android.media.MediaPlayer m) {
+                    if (m != mp) {
+                        return;
+                    }
+                    // Fine "falsa": dopo un salto nella barra lo stream puo' chiudersi a meta' brano. Se siamo
+                    // lontani dalla fine vera, riapriamo il brano dal punto richiesto invece di passare al successivo.
+                    int d = 0;
+                    int pos = 0;
+                    try {
+                        d = m.getDuration();
+                        pos = m.getCurrentPosition();
+                    } catch (Exception ignored) {
+                    }
+                    int target = pos;
+                    if (mpSeekMs >= 0 && System.currentTimeMillis() - mpSeekAt < 10000) {
+                        target = mpSeekMs;
+                    }
+                    if (d > 0 && target < d - 4000 && mpReopens < 3 && mpUrl.length() > 0) {
+                        mpReopens++;
+                        mpSeekMs = target;
+                        mpSeekAt = System.currentTimeMillis();
+                        mpOpen(mpUrl, mpGen, target, true);
+                        return;
+                    }
+                    mpStarted = false;
+                    mpEnded = true;
+                    mpHandler.removeCallbacks(mpTick);
+                    emitAudio("ended", 0, 0);
+                }
+            });
+            p.setOnErrorListener(new android.media.MediaPlayer.OnErrorListener() {
+                @Override
+                public boolean onError(android.media.MediaPlayer m, int what, int extra) {
+                    if (m != mp) {
+                        return true;
+                    }
+                    mpPrepared = false;
+                    mpStarted = false;
+                    mpHandler.removeCallbacks(mpTick);
+                    emitAudio("error", what, extra);
+                    return true;
+                }
+            });
+            p.setOnInfoListener(new android.media.MediaPlayer.OnInfoListener() {
+                @Override
+                public boolean onInfo(android.media.MediaPlayer m, int what, int extra) {
+                    if (m != mp) {
+                        return true;
+                    }
+                    if (what == android.media.MediaPlayer.MEDIA_INFO_BUFFERING_START) {
+                        emitAudio("waiting", 0, 0);
+                    } else if (what == android.media.MediaPlayer.MEDIA_INFO_BUFFERING_END && mpStarted) {
+                        emitAudio("playing", 0, 0);
+                    }
+                    return true;
+                }
+            });
+            p.setOnSeekCompleteListener(new android.media.MediaPlayer.OnSeekCompleteListener() {
+                @Override
+                public void onSeekComplete(android.media.MediaPlayer m) {
+                    if (m != mp) {
+                        return;
+                    }
+                    emitAudio("tick", 0, 0);
+                }
+            });
+            p.setDataSource(url);
+            p.prepareAsync();
+        } catch (Exception e) {
+            emitAudio("error", -2, 0);
+        }
+    }
+
     @PluginMethod
     public void audioLoad(final PluginCall call) {
         final String url = call.getString("url", "");
@@ -823,91 +940,9 @@ public class NativeHttpPlugin extends Plugin {
         mpHandler.post(new Runnable() {
             @Override
             public void run() {
-                try {
-                    mpReleasePlayer();
-                    mpGen = gen;
-                    mpEnded = false;
-                    mpStartMs = startMs;
-                    mpResumeOnFocus = false;
-                    final android.media.MediaPlayer p = new android.media.MediaPlayer();
-                    mp = p;
-                    p.setAudioAttributes(new android.media.AudioAttributes.Builder()
-                            .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
-                            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
-                            .build());
-                    mpApplyVolume();
-                    p.setOnPreparedListener(new android.media.MediaPlayer.OnPreparedListener() {
-                        @Override
-                        public void onPrepared(android.media.MediaPlayer m) {
-                            if (m != mp) {
-                                return;
-                            }
-                            mpPrepared = true;
-                            try {
-                                if (mpStartMs > 0) {
-                                    m.seekTo(mpStartMs);
-                                }
-                            } catch (Exception ignored) {
-                            }
-                            emitAudio("loadedmetadata", 0, 0);
-                            if (mpWantPlay) {
-                                mpStartPlayback();
-                            }
-                        }
-                    });
-                    p.setOnCompletionListener(new android.media.MediaPlayer.OnCompletionListener() {
-                        @Override
-                        public void onCompletion(android.media.MediaPlayer m) {
-                            if (m != mp) {
-                                return;
-                            }
-                            mpStarted = false;
-                            mpEnded = true;
-                            mpHandler.removeCallbacks(mpTick);
-                            emitAudio("ended", 0, 0);
-                        }
-                    });
-                    p.setOnErrorListener(new android.media.MediaPlayer.OnErrorListener() {
-                        @Override
-                        public boolean onError(android.media.MediaPlayer m, int what, int extra) {
-                            if (m != mp) {
-                                return true;
-                            }
-                            mpPrepared = false;
-                            mpStarted = false;
-                            mpHandler.removeCallbacks(mpTick);
-                            emitAudio("error", what, extra);
-                            return true;
-                        }
-                    });
-                    p.setOnInfoListener(new android.media.MediaPlayer.OnInfoListener() {
-                        @Override
-                        public boolean onInfo(android.media.MediaPlayer m, int what, int extra) {
-                            if (m != mp) {
-                                return true;
-                            }
-                            if (what == android.media.MediaPlayer.MEDIA_INFO_BUFFERING_START) {
-                                emitAudio("waiting", 0, 0);
-                            } else if (what == android.media.MediaPlayer.MEDIA_INFO_BUFFERING_END && mpStarted) {
-                                emitAudio("playing", 0, 0);
-                            }
-                            return true;
-                        }
-                    });
-                    p.setOnSeekCompleteListener(new android.media.MediaPlayer.OnSeekCompleteListener() {
-                        @Override
-                        public void onSeekComplete(android.media.MediaPlayer m) {
-                            if (m != mp) {
-                                return;
-                            }
-                            emitAudio("tick", 0, 0);
-                        }
-                    });
-                    p.setDataSource(url);
-                    p.prepareAsync();
-                } catch (Exception e) {
-                    emitAudio("error", -2, 0);
-                }
+                mpReopens = 0;
+                mpSeekMs = -1;
+                mpOpen(url, gen, startMs, false);
             }
         });
         call.resolve();
@@ -948,6 +983,8 @@ public class NativeHttpPlugin extends Plugin {
             @Override
             public void run() {
                 try {
+                    mpSeekMs = ms;
+                    mpSeekAt = System.currentTimeMillis();
                     if (mp != null && mpPrepared) {
                         mp.seekTo(ms);
                         mpEnded = false;
