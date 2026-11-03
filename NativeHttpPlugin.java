@@ -668,18 +668,32 @@ public class NativeHttpPlugin extends Plugin {
         // dalla pagina (non ha ancora fatto in tempo a fermarsi): altrimenti l'auto torna a "play" e il minutaggio riparte
         private volatile long pauseHoldUntil = 0;
         private final android.os.Handler mainHandler = new android.os.Handler(android.os.Looper.getMainLooper());
-        // Certe autoradio (Uconnect) ignorano il primo aggiornamento di pausa: lo ribadiamo un paio di volte
+        // Certe autoradio (Uconnect) non fermano il minutaggio alla prima pausa: ribadiamo lo stato di pausa
+        // ogni secondo per ~12 s, cambiando di pochi ms la posizione cosi' lo stack Bluetooth lo
+        // considera un aggiornamento vero (uno stato identico viene scartato) e lo inoltra all'auto
+        private int reassertCount = 0;
+        private boolean wasPlayingForReassert = false;
         private final Runnable reassertPause = new Runnable() {
             @Override
             public void run() {
                 synchronized (MediaService.this) {
                     try {
-                        if (current != null && !current.playing && session != null) {
-                            lastSentPlaying = false;
-                            lastSentPosMs = current.positionMs;
-                            lastSentAt = android.os.SystemClock.elapsedRealtime();
-                            session.setPlaybackState(buildState(current, false));
+                        if (current == null || current.playing || session == null || reassertCount >= 12) {
+                            return;
                         }
+                        reassertCount++;
+                        long pos = lastSentPlaying ? current.positionMs : lastSentPosMs;
+                        if (pos <= 0) pos = current.positionMs;
+                        pos += (reassertCount % 2 == 0) ? 0 : 40;
+                        lastSentPlaying = false;
+                        lastSentPosMs = pos;
+                        lastSentAt = android.os.SystemClock.elapsedRealtime();
+                        long acts = PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PAUSE | PlaybackState.ACTION_PLAY_PAUSE
+                                | PlaybackState.ACTION_SKIP_TO_NEXT | PlaybackState.ACTION_SKIP_TO_PREVIOUS
+                                | PlaybackState.ACTION_SEEK_TO;
+                        session.setPlaybackState(new PlaybackState.Builder().setActions(acts)
+                                .setState(PlaybackState.STATE_PAUSED, pos, 0f).build());
+                        mainHandler.postDelayed(this, 1000);
                     } catch (Exception ignored) {
                     }
                 }
@@ -762,6 +776,7 @@ public class NativeHttpPlugin extends Plugin {
                             lastSentAt = now;
                             stateEverSent = true;
                             pauseHoldUntil = now + 2500;
+                            startPauseReassert();
                             long acts = PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PAUSE | PlaybackState.ACTION_PLAY_PAUSE
                                     | PlaybackState.ACTION_SKIP_TO_NEXT | PlaybackState.ACTION_SKIP_TO_PREVIOUS
                                     | PlaybackState.ACTION_SEEK_TO;
@@ -922,10 +937,12 @@ public class NativeHttpPlugin extends Plugin {
         synchronized void apply(MediaInfo info) {
             current = info;
             updateSession(info);
-            mainHandler.removeCallbacks(reassertPause);
-            if (!info.playing) {
-                mainHandler.postDelayed(reassertPause, 1200);
-                mainHandler.postDelayed(reassertPause, 3500);
+            if (info.playing) {
+                wasPlayingForReassert = true;
+                mainHandler.removeCallbacks(reassertPause);
+            } else if (wasPlayingForReassert) {
+                wasPlayingForReassert = false;
+                startPauseReassert();
             }
             ensureArt(info.artwork);
             Notification n = buildNotification(info);
@@ -960,6 +977,12 @@ public class NativeHttpPlugin extends Plugin {
                 startForeground(NOTIF_ID, n);
             }
             fg = true;
+        }
+
+        private void startPauseReassert() {
+            reassertCount = 0;
+            mainHandler.removeCallbacks(reassertPause);
+            mainHandler.postDelayed(reassertPause, 700);
         }
 
         private void updateSession(MediaInfo info) {
