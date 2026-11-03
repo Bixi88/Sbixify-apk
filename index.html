@@ -3946,7 +3946,7 @@
                 if (!this.a.getAttribute('src')) return;
                 try { this.a.currentTime = Math.max(0, sec); } catch (e) {}
             }
-            getCurrentTime() { return this.mode === 'yt' ? (this._y('getCurrentTime', 0) || 0) : (this._released ? this._released.pos : (this.a.currentTime || 0)); }
+            getCurrentTime() { return this.mode === 'yt' ? (this._y('getCurrentTime', 0) || 0) : (this._released ? this._released.pos : (this._resumeAt != null ? this._resumeAt : (this.a.currentTime || 0))); }
             getDuration() {
                 if (this.mode === 'yt') return this._y('getDuration', 0) || 0;
                 if (this._released) return this._released.dur;
@@ -10706,6 +10706,19 @@
                 navigator.mediaSession.setActionHandler('pause', (d) => remoteMediaCommand('pause', !!(d && d.external)));
                 navigator.mediaSession.setActionHandler('previoustrack', prevTrack);
                 navigator.mediaSession.setActionHandler('nexttrack', nextTrack);
+                // Barra di avanzamento della notifica / schermata di blocco / auto: prima il comando arrivava
+                // ma nessuno lo ascoltava, quindi la barra tornava indietro da sola
+                navigator.mediaSession.setActionHandler('seekto', (d) => {
+                    try {
+                        if (!player || !d || typeof d.seekTime !== 'number' || !isFinite(d.seekTime)) return;
+                        const dur = player.getDuration ? player.getDuration() : 0;
+                        const t = Math.max(0, dur > 0 ? Math.min(d.seekTime, Math.max(0, dur - 0.5)) : d.seekTime);
+                        player.seekTo(t, true);
+                        updateMediaSessionPosition();
+                        // riscrivere lo stato forza l'invio immediato della nuova posizione (senza attendere i 3 s)
+                        navigator.mediaSession.playbackState = appState.isPlaying ? 'playing' : 'paused';
+                    } catch (e) {}
+                });
             }
         }
 
