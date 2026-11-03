@@ -309,6 +309,19 @@ public class NativeHttpPlugin extends Plugin {
         t.start();
     }
 
+    /** Richiesta a YouTube di un blocco di byte (con gli header che servono a googlevideo). */
+    private HttpURLConnection openUp(URL u, String ua, long from, long to) throws IOException {
+        HttpURLConnection c = (HttpURLConnection) u.openConnection();
+        c.setConnectTimeout(15000);
+        c.setReadTimeout(20000);
+        c.setRequestProperty("Range", "bytes=" + from + "-" + to);
+        c.setRequestProperty("User-Agent", ua != null && ua.length() > 0 ? ua : "Mozilla/5.0");
+        c.setRequestProperty("Origin", "https://music.youtube.com");
+        c.setRequestProperty("Referer", "https://music.youtube.com/");
+        c.setRequestProperty("Accept-Encoding", "identity");
+        return c;
+    }
+
     private void writeSimple(OutputStream out, int code, String text) throws IOException {
         String h = "HTTP/1.1 " + code + " " + text + "\r\n"
                 + "Content-Length: 0\r\n"
@@ -391,18 +404,10 @@ public class NativeHttpPlugin extends Plugin {
                 }
             }
             long cap = start + CHUNK - 1;
-            if (end < 0 || end > cap) {
-                end = cap;
-            }
+            long clientEnd = end;                       // fine richiesta dal client (-1 = fino alla fine del file)
+            long firstEnd = (end < 0 || end > cap) ? cap : end;
 
-            up = (HttpURLConnection) u.openConnection();
-            up.setConnectTimeout(15000);
-            up.setReadTimeout(20000);
-            up.setRequestProperty("Range", "bytes=" + start + "-" + end);
-            up.setRequestProperty("User-Agent", ua != null && ua.length() > 0 ? ua : "Mozilla/5.0");
-            up.setRequestProperty("Origin", "https://music.youtube.com");
-            up.setRequestProperty("Referer", "https://music.youtube.com/");
-            up.setRequestProperty("Accept-Encoding", "identity");
+            up = openUp(u, ua, start, firstEnd);
 
             int status = up.getResponseCode();
             lastStatus = status;
@@ -419,15 +424,44 @@ public class NativeHttpPlugin extends Plugin {
             String contentRange = up.getHeaderField("Content-Range");
             int length = up.getContentLength();
 
+            // Dimensione totale del file (da "Content-Range: bytes a-b/TOTALE")
+            long total = -1;
+            if (status == 206 && contentRange != null) {
+                int sl = contentRange.lastIndexOf('/');
+                if (sl >= 0) {
+                    try {
+                        total = Long.parseLong(contentRange.substring(sl + 1).trim());
+                    } catch (NumberFormatException ignored) {
+                    }
+                }
+            }
+            // YouTube accetta solo blocchi da 1 MB, ma i player nativi (MediaPlayer, ExoPlayer) si aspettano che la
+            // risposta copra TUTTO l'intervallo richiesto: se la chiudiamo dopo 1 MB credono che il brano sia finito
+            // (di qui il salto al brano dopo quando si sposta la barra). Allora promettiamo l'intervallo intero e
+            // scarichiamo i blocchi successivi da YouTube uno dopo l'altro, dentro la stessa risposta.
+            long fullEnd = -1;
+            if (total > 0) {
+                fullEnd = total - 1;
+                if (clientEnd >= 0 && clientEnd < fullEnd) {
+                    fullEnd = clientEnd;
+                }
+            }
+            boolean chain = status == 206 && total > 0 && fullEnd > firstEnd;
+
             StringBuilder h = new StringBuilder();
             h.append("HTTP/1.1 ").append(status == 206 ? "206 Partial Content" : "200 OK").append("\r\n");
             h.append("Content-Type: ").append(contentType).append("\r\n");
             h.append("Accept-Ranges: bytes\r\n");
-            if (contentRange != null) {
-                h.append("Content-Range: ").append(contentRange).append("\r\n");
-            }
-            if (length >= 0) {
-                h.append("Content-Length: ").append(length).append("\r\n");
+            if (chain) {
+                h.append("Content-Range: bytes ").append(start).append("-").append(fullEnd).append("/").append(total).append("\r\n");
+                h.append("Content-Length: ").append(fullEnd - start + 1).append("\r\n");
+            } else {
+                if (contentRange != null) {
+                    h.append("Content-Range: ").append(contentRange).append("\r\n");
+                }
+                if (length >= 0) {
+                    h.append("Content-Length: ").append(length).append("\r\n");
+                }
             }
             h.append("Access-Control-Allow-Origin: *\r\n");
             h.append("Connection: close\r\n\r\n");
@@ -436,8 +470,37 @@ public class NativeHttpPlugin extends Plugin {
             InputStream in = up.getInputStream();
             byte[] buf = new byte[16384];
             int n;
+            long sent = 0;
             while ((n = in.read(buf)) != -1) {
                 out.write(buf, 0, n);
+                sent += n;
+            }
+            if (chain) {
+                long next = start + sent;
+                while (next <= fullEnd) {
+                    try {
+                        up.disconnect();
+                    } catch (Exception ignored) {
+                    }
+                    long e2 = Math.min(fullEnd, next + CHUNK - 1);
+                    up = openUp(u, ua, next, e2);
+                    int st2 = up.getResponseCode();
+                    lastStatus = st2;
+                    if (st2 != 206) {
+                        lastError = "HTTP " + st2;
+                        break;
+                    }
+                    InputStream in2 = up.getInputStream();
+                    long got = 0;
+                    while ((n = in2.read(buf)) != -1) {
+                        out.write(buf, 0, n);
+                        got += n;
+                    }
+                    if (got <= 0) {
+                        break;
+                    }
+                    next += got;
+                }
             }
             out.flush();
         } catch (Exception e) {
