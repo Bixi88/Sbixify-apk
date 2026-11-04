@@ -4613,8 +4613,8 @@
             } else if (event.data == PS.PAUSED) {
                 appState.isPlaying = false;
                 setPlayIconState(false);
-                updateMediaSessionPosition();   // prima la posizione esatta, poi lo stato di pausa
-                updateMediaSessionState(false);
+                updateMediaSessionState(false);   // prima lo stato di pausa: se la posizione partisse per prima porterebbe ancora "playing"
+                updateMediaSessionPosition();
                 syncKeepAlive(false);
             } else if (event.data == PS.ENDED) {
                 appState.isPlaying = false;

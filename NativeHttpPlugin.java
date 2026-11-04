@@ -830,6 +830,10 @@ public class NativeHttpPlugin extends Plugin {
             }
             mp.start();
             mpStarted = true;
+            try {
+                MediaService.nativePlayState(true, mp.getCurrentPosition());
+            } catch (Exception ignored) {
+            }
             emitAudio("playing", 0, 0);
             mpHandler.removeCallbacks(mpTick);
             mpHandler.postDelayed(mpTick, 1000);
@@ -1195,6 +1199,10 @@ public class NativeHttpPlugin extends Plugin {
             }
             synchronized (s) {
                 MediaInfo c = s.current;
+                if (c == null) {
+                    return;
+                }
+                s.pauseHoldUntil = playing ? 0 : android.os.SystemClock.elapsedRealtime() + 800;
                 MediaInfo n = new MediaInfo();
                 n.title = c.title;
                 n.artist = c.artist;
@@ -1488,9 +1496,17 @@ public class NativeHttpPlugin extends Plugin {
          * spostata rispetto a quella che il sistema estrapola da solo (seek). Il semplice scorrere del tempo
          * NON va rimandato: la MediaSession lo calcola da posizione + velocita' 1.0.
          */
+        // Subito dopo una pausa decisa dal player nativo, la pagina web puo' ancora mandare per un attimo
+        // "playing" (non si e' ancora accorta della pausa): senza questa guardia l'auto riceve PAUSA, poi PLAY,
+        // poi PAUSA e resta su "play" con il minutaggio che corre.
+        private volatile long pauseHoldUntil = 0;
+
         private void pushState(MediaInfo info, boolean forcePaused) {
-            boolean playing = info.playing && !forcePaused;
             long now = android.os.SystemClock.elapsedRealtime();
+            if (now < pauseHoldUntil) {
+                forcePaused = true;
+            }
+            boolean playing = info.playing && !forcePaused;
             long expected = lastSentPosMs + (lastSentPlaying ? (now - lastSentAt) : 0);
             boolean send = !stateEverSent
                     || playing != lastSentPlaying
