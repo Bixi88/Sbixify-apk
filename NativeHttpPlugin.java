@@ -1401,9 +1401,6 @@ public class NativeHttpPlugin extends Plugin {
             if (s3 != null) {
                 b.setStyle(new androidx.media3.session.MediaStyleNotificationHelper.MediaStyle(s3)
                         .setShowActionsInCompactView(0, 1, 2));
-            } else {
-                b.setStyle(new androidx.media.app.NotificationCompat.MediaStyle()
-                        .setShowActionsInCompactView(0, 1, 2));
             }
             return b.build();
         }
