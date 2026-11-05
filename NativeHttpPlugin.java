@@ -771,7 +771,7 @@ public class NativeHttpPlugin extends Plugin {
     }
 
     private static androidx.media3.common.MediaItem buildItem(String url, String mediaId, String title,
-                                                              String artist, String album, String artwork) {
+                                                              String artist, String album, String artwork, long durationMs) {
         androidx.media3.common.MediaMetadata.Builder mb = new androidx.media3.common.MediaMetadata.Builder()
                 .setTitle(title)
                 .setDisplayTitle(title)
@@ -779,6 +779,9 @@ public class NativeHttpPlugin extends Plugin {
                 .setAlbumTitle(album);
         if (artwork != null && (artwork.startsWith("https://") || artwork.startsWith("http://"))) {
             mb.setArtworkUri(Uri.parse(artwork));
+        }
+        if (durationMs > 0) {
+            mb.setDurationMs(durationMs);
         }
         return new androidx.media3.common.MediaItem.Builder()
                 .setMediaId(mediaId)
@@ -906,27 +909,6 @@ public class NativeHttpPlugin extends Plugin {
         });
     }
 
-    /** Titolo/artista/copertina cambiati: aggiorna il brano in corso senza interromperlo (stesso indirizzo audio). */
-    private static void applyMeta(final MediaInfo info) {
-        final String key = info.title + "|" + info.artist + "|" + info.album + "|" + info.artwork;
-        mpHandler.post(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    if (exo == null || exo.getMediaItemCount() == 0 || mpUrl.length() == 0) {
-                        return;
-                    }
-                    if (key.equals(mpMetaKey) || info.title.length() == 0) {
-                        return;
-                    }
-                    mpMetaKey = key;
-                    exo.replaceMediaItem(0, buildItem(mpUrl, mpMediaId, info.title, info.artist, info.album, info.artwork));
-                } catch (Exception ignored) {
-                }
-            }
-        });
-    }
-
     @PluginMethod
     public void audioLoad(final PluginCall call) {
         final String url = call.getString("url", "");
@@ -937,6 +919,7 @@ public class NativeHttpPlugin extends Plugin {
         final String artist = call.getString("artist", "");
         final String album = call.getString("album", "");
         final String artwork = call.getString("artwork", "");
+        final long durMs = Math.round(call.getDouble("durationSec", 0.0) * 1000.0);
         final Context ctx = getContext();
         audioInst = this;
         mpHandler.post(new Runnable() {
@@ -950,7 +933,7 @@ public class NativeHttpPlugin extends Plugin {
                     mpMetaKey = title + "|" + artist + "|" + album + "|" + artwork;
                     mpMetaSent = false;
                     mpHandler.removeCallbacks(mpTick);
-                    exo.setMediaItem(buildItem(url, mpMediaId, title, artist, album, artwork), startMs);
+                    exo.setMediaItem(buildItem(url, mpMediaId, title, artist, album, artwork, durMs), startMs);
                     exo.setPlayWhenReady(autoplay);
                     exo.prepare();
                 } catch (Exception e) {
@@ -972,6 +955,8 @@ public class NativeHttpPlugin extends Plugin {
                     }
                     if (exo.getPlaybackState() == androidx.media3.common.Player.STATE_IDLE && exo.getMediaItemCount() > 0) {
                         exo.prepare();
+                    } else if (exo.getPlaybackState() == androidx.media3.common.Player.STATE_ENDED) {
+                        exo.seekToDefaultPosition();
                     }
                     exo.play();
                 } catch (Exception ignored) {
@@ -1065,7 +1050,6 @@ public class NativeHttpPlugin extends Plugin {
             info.positionMs = (long) (pos.doubleValue() * 1000.0);
             info.durationMs = (long) (dur.doubleValue() * 1000.0);
             MediaService.submit(getContext(), info);
-            applyMeta(info);
             call.resolve();
         } catch (Exception e) {
             call.reject(String.valueOf(e.getMessage()));

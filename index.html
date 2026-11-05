@@ -3698,7 +3698,8 @@
                         md = { title: m.title || '', artist: m.artist || '', album: m.album || '', artwork: aw };
                     }
                 } catch (e) {}
-                this._call('audioLoad', Object.assign({ url: this._src, gen: this._gen, startSec: this._pos, autoplay: this._wantPlay }, md));
+                const dh = this._durHint || 0; this._durHint = 0;
+                this._call('audioLoad', Object.assign({ url: this._src, gen: this._gen, startSec: this._pos, autoplay: this._wantPlay, durationSec: dh }, md));
             }
             load() {
                 if (!this._src) {
@@ -3894,8 +3895,10 @@
                 this._resolving = true;
                 try {
                     let url;
+                    let durHint = 0;
                     if (nativeHttp()) {
                         const info = await NR.resolve(id, this._meta(id), this._fmt(), force);
+                        durHint = Number(info && info.len) || 0;   // durata nota gia' dalla risoluzione: serve all'auto subito
                         url = await this._viaProxy(info);
                     } else {
                         url = this._workerUrl(id, force);
@@ -3904,6 +3907,7 @@
                     this._resumeAt = resumeAt;
                     a.preload = this._wantPlay ? 'auto' : 'metadata';
                     a._startAt = resumeAt > 0 ? resumeAt : 0;   // solo player nativo: parte gia' dalla posizione giusta
+                    a._durHint = durHint;
                     a.src = url;
                     a.volume = this._vol;
                     a.muted = this._muted;
