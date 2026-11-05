@@ -554,6 +554,7 @@ public class NativeHttpPlugin extends Plugin {
         }
         try {
             // La pagina (e con lei l'audio) non esiste piu': niente notifica "fantasma" che sembra suonare
+            releaseExo();
             getContext().stopService(new Intent(getContext(), MediaService.class));
         } catch (Exception ignored) {
         }
@@ -643,30 +644,28 @@ public class NativeHttpPlugin extends Plugin {
     }
 
     // =====================================================================================
-    // Player audio NATIVO (android.media.MediaPlayer). Come in Echo/Spotify l'audio non esce piu' dal
-    // WebView: pausa e stato di riproduzione sono immediati e arrivano subito all'autoradio.
-    // La pagina web parla con questo player tramite un finto <audio> (NativeAudioElement in index.html).
+    // Player audio NATIVO come in Echo Music: ExoPlayer + MediaSession di Media3.
+    // L'audio non esce piu' dal WebView e lo stato che vede l'auto (play/pausa, posizione, durata, titolo)
+    // lo genera Media3 direttamente dal player, senza codice nostro in mezzo.
+    // La pagina web comanda il player tramite un finto <audio> (NativeAudioElement in index.html) e riceve
+    // gli eventi (playing, pause, ended...) dal player: anche i comandi dell'auto passano da qui.
     // =====================================================================================
     static volatile NativeHttpPlugin audioInst;
-    private android.media.MediaPlayer mp;
-    private int mpGen = 0;
-    private boolean mpPrepared = false;
-    private boolean mpWantPlay = false;
-    private boolean mpStarted = false;
-    private boolean mpEnded = false;
-    private int mpStartMs = 0;
-    private boolean mpResumeOnFocus = false;
-    private boolean mpDucked = false;
-    private float mpVol = 1f;
-    private boolean mpMuted = false;
-    private android.media.AudioManager mpAm;
-    private android.media.AudioFocusRequest mpFocusReq;
-    private final android.os.Handler mpHandler = new android.os.Handler(android.os.Looper.getMainLooper());
-    private final Runnable mpTick = new Runnable() {
+    static androidx.media3.exoplayer.ExoPlayer exo;
+    static androidx.media3.session.MediaSession m3;
+    private static final android.os.Handler mpHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private static int mpGen = 0;
+    private static String mpUrl = "";
+    private static String mpMediaId = "sbx";
+    private static String mpMetaKey = "";
+    private static boolean mpMetaSent = false;
+    private static float mpVol = 1f;
+    private static boolean mpMuted = false;
+    private static final Runnable mpTick = new Runnable() {
         @Override
         public void run() {
             try {
-                if (mp != null && mpStarted) {
+                if (exo != null && exo.isPlaying()) {
                     emitAudio("tick", 0, 0);
                     mpHandler.postDelayed(this, 1000);
                 }
@@ -674,342 +673,289 @@ public class NativeHttpPlugin extends Plugin {
             }
         }
     };
-    private final android.media.AudioManager.OnAudioFocusChangeListener mpFocusListener =
-            new android.media.AudioManager.OnAudioFocusChangeListener() {
-                @Override
-                public void onAudioFocusChange(int change) {
-                    try {
-                        if (change == android.media.AudioManager.AUDIOFOCUS_LOSS) {
-                            mpResumeOnFocus = false;
-                            mpPauseNow(true);
-                        } else if (change == android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
-                            if (mpStarted) {
-                                mpResumeOnFocus = true;
-                                mpPauseNow(true);
-                            }
-                        } else if (change == android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK) {
-                            mpDucked = true;
-                            mpApplyVolume();
-                        } else if (change == android.media.AudioManager.AUDIOFOCUS_GAIN) {
-                            mpDucked = false;
-                            mpApplyVolume();
-                            if (mpResumeOnFocus) {
-                                mpResumeOnFocus = false;
-                                mpWantPlay = true;
-                                mpStartPlayback();
-                            }
-                        }
-                    } catch (Exception ignored) {
-                    }
-                }
-            };
 
-    private void emitAudio(String ev, int what, int extra) {
+    /** Player esposto alla MediaSession: aggiunge "brano successivo / precedente" (li decide la pagina web). */
+    static final class SbxPlayer extends androidx.media3.common.ForwardingPlayer {
+        SbxPlayer(androidx.media3.common.Player p) {
+            super(p);
+        }
+
+        @Override
+        public androidx.media3.common.Player.Commands getAvailableCommands() {
+            return super.getAvailableCommands().buildUpon()
+                    .add(COMMAND_SEEK_TO_NEXT)
+                    .add(COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+                    .add(COMMAND_SEEK_TO_PREVIOUS)
+                    .add(COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+                    .build();
+        }
+
+        @Override
+        public boolean isCommandAvailable(int command) {
+            if (command == COMMAND_SEEK_TO_NEXT || command == COMMAND_SEEK_TO_NEXT_MEDIA_ITEM
+                    || command == COMMAND_SEEK_TO_PREVIOUS || command == COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM) {
+                return true;
+            }
+            return super.isCommandAvailable(command);
+        }
+
+        @Override
+        public boolean hasNextMediaItem() {
+            return true;
+        }
+
+        @Override
+        public boolean hasPreviousMediaItem() {
+            return true;
+        }
+
+        @Override
+        public void seekToNext() {
+            skipFromSession("next");
+        }
+
+        @Override
+        public void seekToNextMediaItem() {
+            skipFromSession("next");
+        }
+
+        @Override
+        public void seekToPrevious() {
+            skipFromSession("previous");
+        }
+
+        @Override
+        public void seekToPreviousMediaItem() {
+            skipFromSession("previous");
+        }
+    }
+
+    private static void skipFromSession(String action) {
+        NativeHttpPlugin p = instanceRef;
+        if (p != null) {
+            p.emit(action, 0);
+        }
+    }
+
+    private static void emitAudio(String ev, int what, int extra) {
         try {
+            NativeHttpPlugin p = instanceRef;
+            if (p == null) {
+                return;
+            }
             JSObject o = new JSObject();
             o.put("ev", ev);
             o.put("gen", mpGen);
             double pos = 0;
             double dur = -1;
-            if (mp != null && mpPrepared) {
-                try {
-                    pos = mp.getCurrentPosition() / 1000.0;
-                    int d = mp.getDuration();
-                    if (d > 0) {
-                        dur = d / 1000.0;
-                    }
-                } catch (Exception ignored) {
+            boolean playing = false;
+            if (exo != null) {
+                long ps = exo.getCurrentPosition();
+                if (ps >= 0) {
+                    pos = ps / 1000.0;
                 }
+                long d = exo.getDuration();
+                if (d > 0) {
+                    dur = d / 1000.0;
+                }
+                playing = exo.isPlaying();
             }
             o.put("pos", pos);
             o.put("dur", dur);
-            o.put("playing", mpStarted);
+            o.put("playing", playing);
             o.put("what", what);
             o.put("extra", extra);
-            notifyListeners("nativeAudio", o);
+            p.notifyListeners("nativeAudio", o);
         } catch (Exception ignored) {
         }
     }
 
-    private void mpApplyVolume() {
-        try {
-            if (mp != null) {
-                float v = mpMuted ? 0f : mpVol;
-                if (mpDucked) {
-                    v = v * 0.25f;
-                }
-                mp.setVolume(v, v);
-            }
-        } catch (Exception ignored) {
+    private static androidx.media3.common.MediaItem buildItem(String url, String mediaId, String title,
+                                                              String artist, String album, String artwork) {
+        androidx.media3.common.MediaMetadata.Builder mb = new androidx.media3.common.MediaMetadata.Builder()
+                .setTitle(title)
+                .setDisplayTitle(title)
+                .setArtist(artist)
+                .setAlbumTitle(album);
+        if (artwork != null && (artwork.startsWith("https://") || artwork.startsWith("http://"))) {
+            mb.setArtworkUri(Uri.parse(artwork));
         }
+        return new androidx.media3.common.MediaItem.Builder()
+                .setMediaId(mediaId)
+                .setUri(url)
+                .setMediaMetadata(mb.build())
+                .build();
     }
 
-    private boolean mpRequestFocus() {
-        try {
-            if (mpAm == null) {
-                mpAm = (android.media.AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
-            }
-            if (mpAm == null) {
-                return true;
-            }
-            int r;
-            if (Build.VERSION.SDK_INT >= 26) {
-                if (mpFocusReq == null) {
-                    android.media.AudioAttributes attrs = new android.media.AudioAttributes.Builder()
-                            .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
-                            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
-                            .build();
-                    mpFocusReq = new android.media.AudioFocusRequest.Builder(android.media.AudioManager.AUDIOFOCUS_GAIN)
-                            .setAudioAttributes(attrs)
-                            .setOnAudioFocusChangeListener(mpFocusListener, mpHandler)
-                            .build();
-                }
-                r = mpAm.requestAudioFocus(mpFocusReq);
-            } else {
-                r = mpAm.requestAudioFocus(mpFocusListener, android.media.AudioManager.STREAM_MUSIC,
-                        android.media.AudioManager.AUDIOFOCUS_GAIN);
-            }
-            return r == android.media.AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
-        } catch (Exception e) {
-            return true;
-        }
-    }
-
-    private void mpAbandonFocus() {
-        try {
-            if (mpAm == null) {
-                return;
-            }
-            if (Build.VERSION.SDK_INT >= 26) {
-                if (mpFocusReq != null) {
-                    mpAm.abandonAudioFocusRequest(mpFocusReq);
-                }
-            } else {
-                mpAm.abandonAudioFocus(mpFocusListener);
-            }
-        } catch (Exception ignored) {
-        }
-    }
-
-    private void mpReleasePlayer() {
-        mpHandler.removeCallbacks(mpTick);
-        android.media.MediaPlayer p = mp;
-        mp = null;
-        mpPrepared = false;
-        mpStarted = false;
-        mpWantPlay = false;
-        if (p != null) {
-            try {
-                p.setOnPreparedListener(null);
-                p.setOnCompletionListener(null);
-                p.setOnErrorListener(null);
-                p.setOnInfoListener(null);
-                p.setOnSeekCompleteListener(null);
-            } catch (Exception ignored) {
-            }
-            try {
-                p.reset();
-            } catch (Exception ignored) {
-            }
-            try {
-                p.release();
-            } catch (Exception ignored) {
-            }
-        }
-    }
-
-    private void mpStartPlayback() {
-        try {
-            if (mp == null || !mpPrepared) {
-                return;
-            }
-            mpRequestFocus();
-            if (mpEnded) {
-                mp.seekTo(0);
-                mpEnded = false;
-            }
-            mp.start();
-            mpStarted = true;
-            try {
-                MediaService.nativePlayState(true, mp.getCurrentPosition());
-            } catch (Exception ignored) {
-            }
-            emitAudio("playing", 0, 0);
-            mpHandler.removeCallbacks(mpTick);
-            mpHandler.postDelayed(mpTick, 1000);
-        } catch (Exception e) {
-            mpStarted = false;
-            emitAudio("error", -1, 0);
-        }
-    }
-
-    /** Pausa vera del player + stato di pausa SUBITO alla MediaSession (senza passare dalla pagina web). */
-    private void mpPauseNow(boolean notifyPage) {
-        try {
-            mpWantPlay = false;
-            mpHandler.removeCallbacks(mpTick);
-            if (mp != null && mpPrepared && mpStarted) {
-                mp.pause();
-                mpStarted = false;
-                long posMs = 0;
-                try {
-                    posMs = mp.getCurrentPosition();
-                } catch (Exception ignored) {
-                }
-                MediaService.nativePlayState(false, posMs);
-                if (notifyPage) {
-                    emitAudio("pause", 0, 0);
-                }
-            } else {
-                mpStarted = false;
-            }
-        } catch (Exception ignored) {
-        }
-    }
-
-    /** Chiamato dalla MediaSession quando l'auto/Bluetooth/notifica mandano PAUSA: ferma l'audio subito. */
-    static void audioPauseFromSession() {
-        final NativeHttpPlugin i = audioInst;
-        if (i == null) {
+    /** Crea ExoPlayer e la sessione Media3 (una volta sola). Solo sul thread principale. */
+    private static void ensureExo(Context ctx) {
+        if (exo != null) {
             return;
         }
-        i.mpHandler.post(new Runnable() {
+        Context app = ctx.getApplicationContext();
+        androidx.media3.common.AudioAttributes aa = new androidx.media3.common.AudioAttributes.Builder()
+                .setUsage(androidx.media3.common.C.USAGE_MEDIA)
+                .setContentType(androidx.media3.common.C.AUDIO_CONTENT_TYPE_MUSIC)
+                .build();
+        exo = new androidx.media3.exoplayer.ExoPlayer.Builder(app)
+                .setAudioAttributes(aa, true)
+                .setHandleAudioBecomingNoisy(true)
+                .build();
+        exo.setVolume(mpMuted ? 0f : mpVol);
+        exo.addListener(new androidx.media3.common.Player.Listener() {
+            @Override
+            public void onPlaybackStateChanged(int state) {
+                if (state == androidx.media3.common.Player.STATE_READY) {
+                    if (!mpMetaSent) {
+                        mpMetaSent = true;
+                        emitAudio("loadedmetadata", 0, 0);
+                    }
+                } else if (state == androidx.media3.common.Player.STATE_BUFFERING) {
+                    if (exo != null && exo.getPlayWhenReady() && mpMetaSent) {
+                        emitAudio("waiting", 0, 0);
+                    }
+                } else if (state == androidx.media3.common.Player.STATE_ENDED) {
+                    mpHandler.removeCallbacks(mpTick);
+                    emitAudio("ended", 0, 0);
+                }
+            }
+
+            @Override
+            public void onIsPlayingChanged(boolean isPlaying) {
+                mpHandler.removeCallbacks(mpTick);
+                if (isPlaying) {
+                    emitAudio("playing", 0, 0);
+                    mpHandler.postDelayed(mpTick, 1000);
+                }
+            }
+
+            @Override
+            public void onPlayWhenReadyChanged(boolean playWhenReady, int reason) {
+                if (!playWhenReady) {
+                    emitAudio("pause", 0, 0);
+                }
+            }
+
+            @Override
+            public void onPlayerError(androidx.media3.common.PlaybackException error) {
+                mpHandler.removeCallbacks(mpTick);
+                emitAudio("error", error.errorCode, 0);
+            }
+
+            @Override
+            public void onPositionDiscontinuity(androidx.media3.common.Player.PositionInfo oldPosition,
+                                                androidx.media3.common.Player.PositionInfo newPosition, int reason) {
+                if (reason == androidx.media3.common.Player.DISCONTINUITY_REASON_SEEK) {
+                    emitAudio("tick", 0, 0);
+                }
+            }
+        });
+        PendingIntent open = null;
+        try {
+            Intent li = app.getPackageManager().getLaunchIntentForPackage(app.getPackageName());
+            if (li != null) {
+                int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+                if (Build.VERSION.SDK_INT >= 23) {
+                    flags |= PendingIntent.FLAG_IMMUTABLE;
+                }
+                open = PendingIntent.getActivity(app, 0, li, flags);
+            }
+        } catch (Exception ignored) {
+        }
+        androidx.media3.session.MediaSession.Builder sb =
+                new androidx.media3.session.MediaSession.Builder(app, new SbxPlayer(exo)).setId("sbixify");
+        if (open != null) {
+            sb.setSessionActivity(open);
+        }
+        m3 = sb.build();
+    }
+
+    /** Libera player e sessione (chiusura app / stop). */
+    static void releaseExo() {
+        mpHandler.post(new Runnable() {
             @Override
             public void run() {
-                i.mpPauseNow(true);
+                try {
+                    mpHandler.removeCallbacks(mpTick);
+                    if (m3 != null) {
+                        m3.release();
+                        m3 = null;
+                    }
+                    if (exo != null) {
+                        exo.release();
+                        exo = null;
+                    }
+                } catch (Exception ignored) {
+                }
             }
         });
     }
 
-    // Brano corrente (serve a riaprirlo se lo stream si interrompe a meta' dopo un salto nella barra)
-    private String mpUrl = "";
-    private int mpSeekMs = -1;
-    private long mpSeekAt = 0;
-    private int mpReopens = 0;
+    /** Pausa immediata dal tasto "pausa" della notifica (senza aspettare la pagina web). */
+    static void pauseFromNotification() {
+        mpHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    if (exo != null) {
+                        exo.pause();
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+        });
+    }
 
-    /** Apre (o riapre) il brano nel player. Da chiamare sul thread principale. */
-    private void mpOpen(final String url, final int gen, final int startMs, final boolean wantPlay) {
-        try {
-            mpReleasePlayer();
-            mpUrl = url;
-            mpGen = gen;
-            mpEnded = false;
-            mpStartMs = startMs;
-            mpWantPlay = wantPlay;
-            mpResumeOnFocus = false;
-            final android.media.MediaPlayer p = new android.media.MediaPlayer();
-            mp = p;
-            p.setAudioAttributes(new android.media.AudioAttributes.Builder()
-                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
-                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
-                    .build());
-            mpApplyVolume();
-            p.setOnPreparedListener(new android.media.MediaPlayer.OnPreparedListener() {
-                @Override
-                public void onPrepared(android.media.MediaPlayer m) {
-                    if (m != mp) {
+    /** Titolo/artista/copertina cambiati: aggiorna il brano in corso senza interromperlo (stesso indirizzo audio). */
+    private static void applyMeta(final MediaInfo info) {
+        final String key = info.title + "|" + info.artist + "|" + info.album + "|" + info.artwork;
+        mpHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    if (exo == null || exo.getMediaItemCount() == 0 || mpUrl.length() == 0) {
                         return;
                     }
-                    mpPrepared = true;
-                    try {
-                        if (mpStartMs > 0) {
-                            m.seekTo(mpStartMs);
-                        }
-                    } catch (Exception ignored) {
-                    }
-                    emitAudio("loadedmetadata", 0, 0);
-                    if (mpWantPlay) {
-                        mpStartPlayback();
-                    }
-                }
-            });
-            p.setOnCompletionListener(new android.media.MediaPlayer.OnCompletionListener() {
-                @Override
-                public void onCompletion(android.media.MediaPlayer m) {
-                    if (m != mp) {
+                    if (key.equals(mpMetaKey) || info.title.length() == 0) {
                         return;
                     }
-                    // Fine "falsa": dopo un salto nella barra lo stream puo' chiudersi a meta' brano. Se siamo
-                    // lontani dalla fine vera, riapriamo il brano dal punto richiesto invece di passare al successivo.
-                    int d = 0;
-                    int pos = 0;
-                    try {
-                        d = m.getDuration();
-                        pos = m.getCurrentPosition();
-                    } catch (Exception ignored) {
-                    }
-                    int target = pos;
-                    if (mpSeekMs >= 0 && System.currentTimeMillis() - mpSeekAt < 10000) {
-                        target = mpSeekMs;
-                    }
-                    if (d > 0 && target < d - 4000 && mpReopens < 3 && mpUrl.length() > 0) {
-                        mpReopens++;
-                        mpSeekMs = target;
-                        mpSeekAt = System.currentTimeMillis();
-                        mpOpen(mpUrl, mpGen, target, true);
-                        return;
-                    }
-                    mpStarted = false;
-                    mpEnded = true;
-                    mpHandler.removeCallbacks(mpTick);
-                    emitAudio("ended", 0, 0);
+                    mpMetaKey = key;
+                    exo.replaceMediaItem(0, buildItem(mpUrl, mpMediaId, info.title, info.artist, info.album, info.artwork));
+                } catch (Exception ignored) {
                 }
-            });
-            p.setOnErrorListener(new android.media.MediaPlayer.OnErrorListener() {
-                @Override
-                public boolean onError(android.media.MediaPlayer m, int what, int extra) {
-                    if (m != mp) {
-                        return true;
-                    }
-                    mpPrepared = false;
-                    mpStarted = false;
-                    mpHandler.removeCallbacks(mpTick);
-                    emitAudio("error", what, extra);
-                    return true;
-                }
-            });
-            p.setOnInfoListener(new android.media.MediaPlayer.OnInfoListener() {
-                @Override
-                public boolean onInfo(android.media.MediaPlayer m, int what, int extra) {
-                    if (m != mp) {
-                        return true;
-                    }
-                    if (what == android.media.MediaPlayer.MEDIA_INFO_BUFFERING_START) {
-                        emitAudio("waiting", 0, 0);
-                    } else if (what == android.media.MediaPlayer.MEDIA_INFO_BUFFERING_END && mpStarted) {
-                        emitAudio("playing", 0, 0);
-                    }
-                    return true;
-                }
-            });
-            p.setOnSeekCompleteListener(new android.media.MediaPlayer.OnSeekCompleteListener() {
-                @Override
-                public void onSeekComplete(android.media.MediaPlayer m) {
-                    if (m != mp) {
-                        return;
-                    }
-                    emitAudio("tick", 0, 0);
-                }
-            });
-            p.setDataSource(url);
-            p.prepareAsync();
-        } catch (Exception e) {
-            emitAudio("error", -2, 0);
-        }
+            }
+        });
     }
 
     @PluginMethod
     public void audioLoad(final PluginCall call) {
         final String url = call.getString("url", "");
         final int gen = call.getInt("gen", 0);
-        final int startMs = (int) Math.round(call.getDouble("startSec", 0.0) * 1000.0);
+        final long startMs = Math.round(call.getDouble("startSec", 0.0) * 1000.0);
+        final boolean autoplay = Boolean.TRUE.equals(call.getBoolean("autoplay", false));
+        final String title = call.getString("title", "");
+        final String artist = call.getString("artist", "");
+        final String album = call.getString("album", "");
+        final String artwork = call.getString("artwork", "");
+        final Context ctx = getContext();
         audioInst = this;
         mpHandler.post(new Runnable() {
             @Override
             public void run() {
-                mpReopens = 0;
-                mpSeekMs = -1;
-                mpOpen(url, gen, startMs, false);
+                try {
+                    ensureExo(ctx);
+                    mpGen = gen;
+                    mpUrl = url;
+                    mpMediaId = "sbx-" + gen;
+                    mpMetaKey = title + "|" + artist + "|" + album + "|" + artwork;
+                    mpMetaSent = false;
+                    mpHandler.removeCallbacks(mpTick);
+                    exo.setMediaItem(buildItem(url, mpMediaId, title, artist, album, artwork), startMs);
+                    exo.setPlayWhenReady(autoplay);
+                    exo.prepare();
+                } catch (Exception e) {
+                    emitAudio("error", -2, 0);
+                }
             }
         });
         call.resolve();
@@ -1017,13 +963,18 @@ public class NativeHttpPlugin extends Plugin {
 
     @PluginMethod
     public void audioPlay(PluginCall call) {
-        audioInst = this;
         mpHandler.post(new Runnable() {
             @Override
             public void run() {
-                mpWantPlay = true;
-                if (mp != null && mpPrepared && !mpStarted) {
-                    mpStartPlayback();
+                try {
+                    if (exo == null) {
+                        return;
+                    }
+                    if (exo.getPlaybackState() == androidx.media3.common.Player.STATE_IDLE && exo.getMediaItemCount() > 0) {
+                        exo.prepare();
+                    }
+                    exo.play();
+                } catch (Exception ignored) {
                 }
             }
         });
@@ -1032,12 +983,15 @@ public class NativeHttpPlugin extends Plugin {
 
     @PluginMethod
     public void audioPause(PluginCall call) {
-        audioInst = this;
         mpHandler.post(new Runnable() {
             @Override
             public void run() {
-                mpResumeOnFocus = false;
-                mpPauseNow(false);
+                try {
+                    if (exo != null) {
+                        exo.pause();
+                    }
+                } catch (Exception ignored) {
+                }
             }
         });
         call.resolve();
@@ -1045,18 +999,13 @@ public class NativeHttpPlugin extends Plugin {
 
     @PluginMethod
     public void audioSeek(PluginCall call) {
-        final int ms = (int) Math.round(call.getDouble("sec", 0.0) * 1000.0);
+        final long ms = Math.round(call.getDouble("sec", 0.0) * 1000.0);
         mpHandler.post(new Runnable() {
             @Override
             public void run() {
                 try {
-                    mpSeekMs = ms;
-                    mpSeekAt = System.currentTimeMillis();
-                    if (mp != null && mpPrepared) {
-                        mp.seekTo(ms);
-                        mpEnded = false;
-                    } else {
-                        mpStartMs = ms;
+                    if (exo != null && exo.getMediaItemCount() > 0) {
+                        exo.seekTo(ms);
                     }
                 } catch (Exception ignored) {
                 }
@@ -1072,21 +1021,31 @@ public class NativeHttpPlugin extends Plugin {
         mpHandler.post(new Runnable() {
             @Override
             public void run() {
-                mpVol = (float) Math.max(0.0, Math.min(1.0, v));
-                mpMuted = muted;
-                mpApplyVolume();
+                try {
+                    mpVol = (float) Math.max(0.0, Math.min(1.0, v));
+                    mpMuted = muted;
+                    if (exo != null) {
+                        exo.setVolume(mpMuted ? 0f : mpVol);
+                    }
+                } catch (Exception ignored) {
+                }
             }
         });
         call.resolve();
     }
 
+    /** "Stop" della pagina tra un brano e l'altro: solo pausa, cosi' la sessione resta col titolo (niente "buco" per l'auto). */
     @PluginMethod
     public void audioStop(PluginCall call) {
         mpHandler.post(new Runnable() {
             @Override
             public void run() {
-                mpReleasePlayer();
-                mpAbandonFocus();
+                try {
+                    if (exo != null) {
+                        exo.pause();
+                    }
+                } catch (Exception ignored) {
+                }
             }
         });
         call.resolve();
@@ -1106,6 +1065,7 @@ public class NativeHttpPlugin extends Plugin {
             info.positionMs = (long) (pos.doubleValue() * 1000.0);
             info.durationMs = (long) (dur.doubleValue() * 1000.0);
             MediaService.submit(getContext(), info);
+            applyMeta(info);
             call.resolve();
         } catch (Exception e) {
             call.reject(String.valueOf(e.getMessage()));
@@ -1115,6 +1075,7 @@ public class NativeHttpPlugin extends Plugin {
     @PluginMethod
     public void stopMedia(PluginCall call) {
         try {
+            releaseExo();
             getContext().stopService(new Intent(getContext(), MediaService.class));
             call.resolve();
         } catch (Exception e) {
@@ -1157,7 +1118,6 @@ public class NativeHttpPlugin extends Plugin {
         static volatile MediaService instance;
         static volatile MediaInfo pending;
 
-        private MediaSession session;
         // Cuffie/auricolari Bluetooth o cavo che si scollegano: Android manda BECOMING_NOISY e noi mettiamo in pausa
         private BroadcastReceiver noisyReceiver;
         private PowerManager.WakeLock wakeLock;
@@ -1166,54 +1126,7 @@ public class NativeHttpPlugin extends Plugin {
         private String artUrl = "";
         private boolean fg = false;
         private MediaInfo current = new MediaInfo();
-        // Cambio brano dal telefono -> "spintarella" di stato per le autoradio (vedi updateSession)
-        private String lastTrackKey = "";
-        private volatile long lastExtSkipAt = 0;
-        private volatile long nudgeUntil = 0;
-        // Ultimi dati davvero inviati alla MediaSession: servono a NON rimandare gli stessi metadati/stato
-        // ogni 3 secondi (certe autoradio, es. Uconnect, a ogni aggiornamento azzerano il minutaggio)
-        private String lastMetaKey = "";
-        private boolean lastSentPlaying = false;
-        private boolean stateEverSent = false;
-        private long lastSentPosMs = 0;
-        private long lastSentAt = 0;
         private final android.os.Handler mainHandler = new android.os.Handler(android.os.Looper.getMainLooper());
-        private final Runnable restoreState = new Runnable() {
-            @Override
-            public void run() {
-                synchronized (MediaService.this) {
-                    nudgeUntil = 0;
-                    try {
-                        pushState(current, false);
-                    } catch (Exception ignored) {
-                    }
-                }
-            }
-        };
-
-        /** Il player nativo e' andato in pausa/play: aggiorna subito la MediaSession (posizione esatta, velocita' 0). */
-        static void nativePlayState(boolean playing, long posMs) {
-            MediaService s = instance;
-            if (s == null) {
-                return;
-            }
-            synchronized (s) {
-                MediaInfo c = s.current;
-                if (c == null) {
-                    return;
-                }
-                s.pauseHoldUntil = playing ? 0 : android.os.SystemClock.elapsedRealtime() + 800;
-                MediaInfo n = new MediaInfo();
-                n.title = c.title;
-                n.artist = c.artist;
-                n.album = c.album;
-                n.artwork = c.artwork;
-                n.durationMs = c.durationMs;
-                n.playing = playing;
-                n.positionMs = posMs;
-                s.apply(n);
-            }
-        }
 
         static void submit(Context ctx, MediaInfo info) {
             pending = info;
@@ -1252,49 +1165,6 @@ public class NativeHttpPlugin extends Plugin {
                 NotificationChannel ch = new NotificationChannel(CHANNEL_ID, "Riproduzione", NotificationManager.IMPORTANCE_LOW);
                 ch.setShowBadge(false);
                 notificationManager().createNotificationChannel(ch);
-            }
-            session = new MediaSession(this, "Sbixify");
-            session.setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS | MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS);
-            session.setCallback(new MediaSession.Callback() {
-                // Comandi dalla MediaSession di sistema (Bluetooth, Alexa, cuffie, blocco schermo):
-                // "ext_" li distingue dai pulsanti della nostra notifica
-                @Override
-                public void onPlay() {
-                    send("ext_play", 0);
-                }
-
-                @Override
-                public void onPause() {
-                    NativeHttpPlugin.audioPauseFromSession();   // audio fermo subito, senza aspettare la pagina web
-                    send("ext_pause", 0);
-                }
-
-                @Override
-                public void onSkipToNext() {
-                    lastExtSkipAt = android.os.SystemClock.elapsedRealtime();
-                    send("next", 0);
-                }
-
-                @Override
-                public void onSkipToPrevious() {
-                    lastExtSkipAt = android.os.SystemClock.elapsedRealtime();
-                    send("previous", 0);
-                }
-
-                @Override
-                public void onSeekTo(long pos) {
-                    send("seek", pos / 1000.0);
-                }
-            });
-            session.setActive(true);
-            // Dopo che il servizio e' stato chiuso, Android ricorda questo ricevitore e gli manda il tasto play
-            // dell'auto / delle cuffie: e' cio' che permette di far partire la musica "da zero" senza toccare il telefono
-            try {
-                Intent mb = new Intent(Intent.ACTION_MEDIA_BUTTON);
-                mb.setComponent(new android.content.ComponentName(this, MediaButtonReceiver.class));
-                session.setMediaButtonReceiver(PendingIntent.getBroadcast(this, 0, mb,
-                        Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0));
-            } catch (Exception ignored) {
             }
             // Se le cuffie si spengono / si scollegano, la musica non deve passare all'altoparlante del telefono:
             // pausa. Usiamo "pause" (non "ext_pause") cosi' non vale la regola che ignora le pause subito
@@ -1364,6 +1234,7 @@ public class NativeHttpPlugin extends Plugin {
             if (ACT_PLAY.equals(action)) {
                 send("play", 0);
             } else if (ACT_PAUSE.equals(action)) {
+                NativeHttpPlugin.pauseFromNotification();
                 send("pause", 0);
             } else if (ACT_NEXT.equals(action)) {
                 send("next", 0);
@@ -1403,9 +1274,6 @@ public class NativeHttpPlugin extends Plugin {
                 if (wifiLock != null && wifiLock.isHeld()) {
                     wifiLock.release();
                 }
-                if (session != null) {
-                    session.release();
-                }
             } catch (Exception ignored) {
             }
             super.onDestroy();
@@ -1417,7 +1285,6 @@ public class NativeHttpPlugin extends Plugin {
 
         synchronized void apply(MediaInfo info) {
             current = info;
-            updateSession(info);
             ensureArt(info.artwork);
             Notification n = buildNotification(info);
             if (info.playing) {
@@ -1451,86 +1318,6 @@ public class NativeHttpPlugin extends Plugin {
                 startForeground(NOTIF_ID, n);
             }
             fg = true;
-        }
-
-        private void updateSession(MediaInfo info) {
-            MediaMetadata.Builder mb = new MediaMetadata.Builder()
-                    .putString(MediaMetadata.METADATA_KEY_TITLE, info.title)
-                    .putString(MediaMetadata.METADATA_KEY_ARTIST, info.artist)
-                    .putString(MediaMetadata.METADATA_KEY_ALBUM, info.album)
-                    .putLong(MediaMetadata.METADATA_KEY_DURATION, info.durationMs);
-            if (art != null) {
-                mb.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, art);
-            }
-            String metaKey = info.title + "|" + info.artist + "|" + info.album + "|" + info.durationMs
-                    + "|" + (art != null);
-            if (!metaKey.equals(lastMetaKey)) {
-                lastMetaKey = metaKey;
-                session.setMetadata(mb.build());
-            }
-
-            // Alcune autoradio (es. Uconnect) rileggono titolo e artista solo quando cambia lo STATO di
-            // riproduzione (play/pausa), non quando cambiano soltanto i metadati: per questo cambiando brano
-            // dal telefono il titolo restava vecchio finche' non si metteva in pausa. Dopo un cambio brano
-            // partito dal telefono mandiamo quindi un brevissimo PAUSED e poi di nuovo PLAYING (l'audio non
-            // c'entra: e' solo lo stato che la sessione comunica). Se il cambio arriva dai comandi dell'auto
-            // (volante) gia' funziona e non tocchiamo niente.
-            String key = info.title + "|" + info.artist;
-            boolean hadTrack = lastTrackKey.length() > 0;
-            boolean changed = info.title.length() > 0 && !key.equals(lastTrackKey);
-            if (info.title.length() > 0) {
-                lastTrackKey = key;
-            }
-            long now = android.os.SystemClock.elapsedRealtime();
-            boolean fromCar = (now - lastExtSkipAt) < 5000;
-            if (changed && hadTrack && info.playing && !fromCar) {
-                nudgeUntil = now + 600;
-                mainHandler.removeCallbacks(restoreState);
-                mainHandler.postDelayed(restoreState, 600);
-            }
-            pushState(info, now < nudgeUntil);
-        }
-
-        /**
-         * Aggiorna lo stato di riproduzione solo se e' cambiato davvero (play/pausa) o se la posizione si e'
-         * spostata rispetto a quella che il sistema estrapola da solo (seek). Il semplice scorrere del tempo
-         * NON va rimandato: la MediaSession lo calcola da posizione + velocita' 1.0.
-         */
-        // Subito dopo una pausa decisa dal player nativo, la pagina web puo' ancora mandare per un attimo
-        // "playing" (non si e' ancora accorta della pausa): senza questa guardia l'auto riceve PAUSA, poi PLAY,
-        // poi PAUSA e resta su "play" con il minutaggio che corre.
-        private volatile long pauseHoldUntil = 0;
-
-        private void pushState(MediaInfo info, boolean forcePaused) {
-            long now = android.os.SystemClock.elapsedRealtime();
-            if (now < pauseHoldUntil) {
-                forcePaused = true;
-            }
-            boolean playing = info.playing && !forcePaused;
-            long expected = lastSentPosMs + (lastSentPlaying ? (now - lastSentAt) : 0);
-            boolean send = !stateEverSent
-                    || playing != lastSentPlaying
-                    || Math.abs(info.positionMs - expected) > 2500;
-            if (!send) {
-                return;
-            }
-            stateEverSent = true;
-            lastSentPlaying = playing;
-            lastSentPosMs = info.positionMs;
-            lastSentAt = now;
-            session.setPlaybackState(buildState(info, forcePaused));
-        }
-
-        private PlaybackState buildState(MediaInfo info, boolean forcePaused) {
-            long actions = PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PAUSE | PlaybackState.ACTION_PLAY_PAUSE
-                    | PlaybackState.ACTION_SKIP_TO_NEXT | PlaybackState.ACTION_SKIP_TO_PREVIOUS
-                    | PlaybackState.ACTION_SEEK_TO;
-            boolean playing = info.playing && !forcePaused;
-            return new PlaybackState.Builder()
-                    .setActions(actions)
-                    .setState(playing ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED,
-                            info.positionMs, playing ? 1.0f : 0.0f)
-                    .build();
         }
 
         private void ensureArt(final String url) {
@@ -1589,19 +1376,15 @@ public class NativeHttpPlugin extends Plugin {
         }
 
         private Notification buildNotification(MediaInfo info) {
-            Notification.Builder b;
-            if (Build.VERSION.SDK_INT >= 26) {
-                b = new Notification.Builder(this, CHANNEL_ID);
-            } else {
-                b = new Notification.Builder(this);
-            }
+            androidx.core.app.NotificationCompat.Builder b =
+                    new androidx.core.app.NotificationCompat.Builder(this, CHANNEL_ID);
             b.setSmallIcon(android.R.drawable.stat_sys_headset)
                     .setContentTitle(info.title.length() > 0 ? info.title : "Sbixify")
                     .setContentText(info.artist)
                     .setOnlyAlertOnce(true)
                     .setShowWhen(false)
                     .setOngoing(info.playing)
-                    .setVisibility(Notification.VISIBILITY_PUBLIC)
+                    .setVisibility(androidx.core.app.NotificationCompat.VISIBILITY_PUBLIC)
                     .setContentIntent(openAppPi())
                     .setDeleteIntent(servicePi(ACT_STOP, 5));
             if (art != null) {
@@ -1614,9 +1397,14 @@ public class NativeHttpPlugin extends Plugin {
                 b.addAction(android.R.drawable.ic_media_play, "Riproduci", servicePi(ACT_PLAY, 2));
             }
             b.addAction(android.R.drawable.ic_media_next, "Successivo", servicePi(ACT_NEXT, 3));
-            b.setStyle(new Notification.MediaStyle()
-                    .setMediaSession(session.getSessionToken())
-                    .setShowActionsInCompactView(0, 1, 2));
+            androidx.media3.session.MediaSession s3 = NativeHttpPlugin.m3;
+            if (s3 != null) {
+                b.setStyle(new androidx.media3.session.MediaStyleNotificationHelper.MediaStyle(s3)
+                        .setShowActionsInCompactView(0, 1, 2));
+            } else {
+                b.setStyle(new androidx.media.app.NotificationCompat.MediaStyle()
+                        .setShowActionsInCompactView(0, 1, 2));
+            }
             return b.build();
         }
     }
@@ -1890,6 +1678,7 @@ public class NativeHttpPlugin extends Plugin {
     @PluginMethod
     public void exitApp(PluginCall call) {
         try {
+            releaseExo();
             getContext().stopService(new Intent(getContext(), MediaService.class));
             call.resolve();
             getActivity().runOnUiThread(new Runnable() {

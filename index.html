@@ -3689,7 +3689,16 @@
                 this._pos = this._startAt || 0; this._posAt = Date.now(); this._dur = NaN; this._startAt = 0;
                 if (!this._src) { this._call('audioStop'); return; }
                 this._fire('loadstart');
-                this._call('audioLoad', { url: this._src, gen: this._gen, startSec: this._pos });
+                // titolo/artista/copertina del brano: li legge il player nativo (Media3) per notifica, auto e schermata di blocco
+                let md = { title: '', artist: '', album: '', artwork: '' };
+                try {
+                    const m = navigator.mediaSession && navigator.mediaSession.metadata;
+                    if (m) {
+                        const aw = (m.artwork && m.artwork.length) ? (m.artwork[m.artwork.length - 1].src || m.artwork[0].src || '') : '';
+                        md = { title: m.title || '', artist: m.artist || '', album: m.album || '', artwork: aw };
+                    }
+                } catch (e) {}
+                this._call('audioLoad', Object.assign({ url: this._src, gen: this._gen, startSec: this._pos, autoplay: this._wantPlay }, md));
             }
             load() {
                 if (!this._src) {

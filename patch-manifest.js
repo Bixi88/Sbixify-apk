@@ -44,7 +44,7 @@ if (!x.includes('android.intent.action.SEND')) {
 // App musicale riconoscibile dal sistema (elenco "Riproduci musica" delle routine Samsung, auto, assistenti)
 if (!x.includes('BrowserStub')) {
   x = x.replace('</application>', () =>
-    '    <service android:name="it.sbixify.app.BrowserStub" android:exported="true">\n' +
+    '    <service android:name="it.sbixify.app.BrowserStub" android:exported="true" android:foregroundServiceType="mediaPlayback">\n' +
     '        <intent-filter>\n' +
     '            <action android:name="android.media.browse.MediaBrowserService" />\n' +
     '        </intent-filter>\n' +
