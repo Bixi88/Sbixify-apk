@@ -58,6 +58,13 @@ jobs:
               }
           }
           EOF
+          cat >> android/app/build.gradle <<'EOF'
+
+          dependencies {
+              implementation 'androidx.media3:media3-exoplayer:1.4.1'
+              implementation 'androidx.media3:media3-session:1.4.1'
+          }
+          EOF
           # Numero di build = ora della compilazione: cresce sempre. Lo stesso numero viene scritto
           # nella release, cosi' l'app (Impostazioni -> Controlla aggiornamenti) puo' confrontarlo.
           VC=$(date +%s)
