@@ -674,65 +674,6 @@ public class NativeHttpPlugin extends Plugin {
         }
     };
 
-    // Registro dei comandi che arrivano da auto / Bluetooth / notifica (per capire cosa manda Uconnect tenendo premuto un tasto)
-    private static final java.util.ArrayList<String> carLog = new java.util.ArrayList<String>();
-
-    static void logCar(String msg) {
-        try {
-            String ts = new java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US).format(new java.util.Date());
-            synchronized (carLog) {
-                carLog.add(ts + "  " + msg);
-                while (carLog.size() > 300) {
-                    carLog.remove(0);
-                }
-            }
-        } catch (Exception ignored) {
-        }
-    }
-
-    private static String cmdName(int c) {
-        if (c == androidx.media3.common.Player.COMMAND_PLAY_PAUSE) return "PLAY_PAUSE";
-        if (c == androidx.media3.common.Player.COMMAND_PREPARE) return "PREPARE";
-        if (c == androidx.media3.common.Player.COMMAND_STOP) return "STOP";
-        if (c == androidx.media3.common.Player.COMMAND_SEEK_TO_NEXT) return "SEEK_TO_NEXT (avanti)";
-        if (c == androidx.media3.common.Player.COMMAND_SEEK_TO_PREVIOUS) return "SEEK_TO_PREVIOUS (indietro)";
-        if (c == androidx.media3.common.Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM) return "SEEK_TO_NEXT_MEDIA_ITEM (avanti)";
-        if (c == androidx.media3.common.Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM) return "SEEK_TO_PREVIOUS_MEDIA_ITEM (indietro)";
-        if (c == androidx.media3.common.Player.COMMAND_SEEK_FORWARD) return "SEEK_FORWARD (avanzamento veloce)";
-        if (c == androidx.media3.common.Player.COMMAND_SEEK_BACK) return "SEEK_BACK (riavvolgimento)";
-        if (c == androidx.media3.common.Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM) return "SEEK_IN_CURRENT_MEDIA_ITEM (salto nel brano)";
-        if (c == androidx.media3.common.Player.COMMAND_SET_REPEAT_MODE) return "SET_REPEAT_MODE";
-        if (c == androidx.media3.common.Player.COMMAND_SET_SHUFFLE_MODE) return "SET_SHUFFLE_MODE";
-        return "comando n." + c;
-    }
-
-    private static final androidx.media3.session.MediaSession.Callback carCallback =
-            new androidx.media3.session.MediaSession.Callback() {
-                @Override
-                public int onPlayerCommandRequest(androidx.media3.session.MediaSession session,
-                                                  androidx.media3.session.MediaSession.ControllerInfo controller,
-                                                  int playerCommand) {
-                    logCar("comando " + cmdName(playerCommand) + "   da " + controller.getPackageName());
-                    return androidx.media3.session.SessionResult.RESULT_SUCCESS;
-                }
-
-                @Override
-                public boolean onMediaButtonEvent(androidx.media3.session.MediaSession session,
-                                                  androidx.media3.session.MediaSession.ControllerInfo controller,
-                                                  Intent intent) {
-                    try {
-                        android.view.KeyEvent ke = intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT);
-                        if (ke != null) {
-                            logCar("TASTO " + android.view.KeyEvent.keyCodeToString(ke.getKeyCode())
-                                    + (ke.getAction() == android.view.KeyEvent.ACTION_DOWN ? "  premuto" : "  rilasciato")
-                                    + "  ripetizione=" + ke.getRepeatCount() + (ke.isLongPress() ? "  PRESSIONE LUNGA" : ""));
-                        }
-                    } catch (Exception ignored) {
-                    }
-                    return false;
-                }
-            };
-
     /** Player esposto alla MediaSession: aggiunge "brano successivo / precedente" (li decide la pagina web). */
     static final class SbxPlayer extends androidx.media3.common.ForwardingPlayer {
         SbxPlayer(androidx.media3.common.Player p) {
@@ -768,7 +709,6 @@ public class NativeHttpPlugin extends Plugin {
         @Override
         public void play() {
             if (getPlaybackState() == androidx.media3.common.Player.STATE_ENDED) {
-                logCar("play ignorato: brano finito, passa al successivo l'app");
                 return;
             }
             super.play();
@@ -777,7 +717,6 @@ public class NativeHttpPlugin extends Plugin {
         @Override
         public void setPlayWhenReady(boolean playWhenReady) {
             if (playWhenReady && getPlaybackState() == androidx.media3.common.Player.STATE_ENDED) {
-                logCar("avvio ignorato: brano finito, passa al successivo l'app");
                 return;
             }
             super.setPlayWhenReady(playWhenReady);
@@ -786,7 +725,6 @@ public class NativeHttpPlugin extends Plugin {
         @Override
         public void seekToDefaultPosition() {
             if (getPlaybackState() == androidx.media3.common.Player.STATE_ENDED) {
-                logCar("ritorno all'inizio ignorato: brano finito");
                 return;
             }
             super.seekToDefaultPosition();
@@ -794,7 +732,6 @@ public class NativeHttpPlugin extends Plugin {
 
         @Override
         public void setRepeatMode(int repeatMode) {
-            logCar("repeat richiesto dall'esterno ignorato (modo " + repeatMode + ")");
         }
 
         @Override
@@ -804,7 +741,6 @@ public class NativeHttpPlugin extends Plugin {
 
         @Override
         public void setShuffleModeEnabled(boolean shuffleModeEnabled) {
-            logCar("shuffle richiesto dall'esterno ignorato");
         }
 
         @Override
@@ -844,7 +780,6 @@ public class NativeHttpPlugin extends Plugin {
     }
 
     private static void skipFromSession(String action) {
-        logCar("-> inoltro alla pagina: " + action);
         NativeHttpPlugin p = instanceRef;
         if (p != null) {
             p.emit(action, 0);
@@ -981,7 +916,7 @@ public class NativeHttpPlugin extends Plugin {
         } catch (Exception ignored) {
         }
         androidx.media3.session.MediaSession.Builder sb =
-                new androidx.media3.session.MediaSession.Builder(app, new SbxPlayer(exo)).setId("sbixify").setCallback(carCallback);
+                new androidx.media3.session.MediaSession.Builder(app, new SbxPlayer(exo)).setId("sbixify");
         if (open != null) {
             sb.setSessionActivity(open);
         }
@@ -1022,27 +957,6 @@ public class NativeHttpPlugin extends Plugin {
                 }
             }
         });
-    }
-
-    @PluginMethod
-    public void getCarLog(PluginCall call) {
-        StringBuilder sb = new StringBuilder();
-        synchronized (carLog) {
-            for (String s : carLog) {
-                sb.append(s).append('\n');
-            }
-        }
-        JSObject o = new JSObject();
-        o.put("log", sb.toString());
-        call.resolve(o);
-    }
-
-    @PluginMethod
-    public void clearCarLog(PluginCall call) {
-        synchronized (carLog) {
-            carLog.clear();
-        }
-        call.resolve();
     }
 
     @PluginMethod
