@@ -2504,6 +2504,11 @@
                     <button id="batteryExemptBtn" type="button" class="font-bold text-xs px-4 py-2 rounded-xl active:scale-95 transition-all custom-bg-accent" style="color:#1a1305;">Escludi dal risparmio batteria</button>
                     <button id="audioLogBtn" type="button" class="font-semibold text-xs px-4 py-2 rounded-xl active:scale-95 transition-all border border-white/10 custom-text-muted">Copia diagnostica</button>
                 </div>
+                <p class="text-[10px] custom-text-muted leading-snug mt-3 mb-2">Prova tasti auto: premi "Azzera", usa i tasti dell'auto (anche tenendoli premuti), poi "Copia tasti auto" e incolla nella chat.</p>
+                <div class="flex space-x-2">
+                    <button id="carLogClearBtn" type="button" class="font-semibold text-xs px-4 py-2 rounded-xl active:scale-95 transition-all border border-white/10 custom-text-muted">Azzera tasti auto</button>
+                    <button id="carLogBtn" type="button" class="font-bold text-xs px-4 py-2 rounded-xl active:scale-95 transition-all custom-bg-accent" style="color:#1a1305;">Copia tasti auto</button>
+                </div>
                 <p class="text-[10px] custom-text-muted leading-snug mt-3 mb-2">Per far partire la musica dal tasto play dell'auto (Bluetooth) anche con l'app chiusa, consenti &quot;Appari sopra altre app&quot;.</p>
                 <button id="overlayBtn" type="button" class="font-bold text-xs px-4 py-2 rounded-xl active:scale-95 transition-all custom-bg-accent" style="color:#1a1305;">Consenti avvio dall'auto</button>
                 <p id="overlayMsg" class="text-[10px] mt-2 custom-text-muted leading-snug"></p>
@@ -3658,6 +3663,24 @@
                 const txt = 'Sbixify diagnostica audio\\n' + navigator.userAgent + '\\n' + log;
                 try { await navigator.clipboard.writeText(txt); msg.textContent = 'Copiato: incollalo nella chat.'; }
                 catch (e) { msg.textContent = 'Non riesco a copiare negli appunti.'; }
+            });
+        });
+
+        window.addEventListener('load', () => {
+            const np = nativeHttp();
+            const msg = document.getElementById('bgAudioMsg');
+            const copyBtn = document.getElementById('carLogBtn');
+            const clearBtn = document.getElementById('carLogClearBtn');
+            if (!np || !copyBtn || !clearBtn) return;
+            clearBtn.addEventListener('click', async () => {
+                try { await np.clearCarLog(); if (msg) msg.textContent = 'Registro tasti azzerato.'; } catch (e) { if (msg) msg.textContent = 'Non riesco ad azzerare il registro.'; }
+            });
+            copyBtn.addEventListener('click', async () => {
+                let log = '';
+                try { const r = await np.getCarLog(); log = (r && r.log) || ''; } catch (e) { log = 'errore: ' + ((e && e.message) || e); }
+                const txt = 'Sbixify tasti auto\n' + (log || '(nessun comando registrato)');
+                try { await navigator.clipboard.writeText(txt); if (msg) msg.textContent = 'Copiato: incollalo nella chat.'; }
+                catch (e) { if (msg) msg.textContent = 'Non riesco a copiare negli appunti.'; }
             });
         });
 
