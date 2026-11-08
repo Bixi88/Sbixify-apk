@@ -149,6 +149,53 @@ public class NativeHttpPlugin extends Plugin {
         captureShare(intent);
     }
 
+    /**
+     * Scorciatoie dinamiche (una per playlist): compaiono tenendo premuta l'icona e nell'azione "Apri applicazione
+     * o esegui azione applicazione" delle routine Samsung. Ognuna apre l'app con un indirizzo sbixify://play/<chiave>,
+     * che la pagina riconosce (vedi captureShare / takeSharedText) e avvia.
+     */
+    @PluginMethod
+    public void setShortcuts(PluginCall call) {
+        try {
+            if (Build.VERSION.SDK_INT < 25) {
+                call.resolve();
+                return;
+            }
+            com.getcapacitor.JSArray arr = call.getArray("items");
+            Context ctx = getContext();
+            android.content.pm.ShortcutManager sm =
+                    (android.content.pm.ShortcutManager) ctx.getSystemService(Context.SHORTCUT_SERVICE);
+            if (sm == null || arr == null) {
+                call.resolve();
+                return;
+            }
+            int max = Math.min(sm.getMaxShortcutCountPerActivity(), 12);
+            java.util.ArrayList<android.content.pm.ShortcutInfo> list = new java.util.ArrayList<android.content.pm.ShortcutInfo>();
+            for (int i = 0; i < arr.length() && list.size() < max; i++) {
+                org.json.JSONObject o = arr.getJSONObject(i);
+                String id = o.optString("id", "");
+                String label = o.optString("label", "");
+                String key = o.optString("key", "");
+                if (id.length() == 0 || label.length() == 0 || key.length() == 0) {
+                    continue;
+                }
+                Intent it = new Intent(Intent.ACTION_VIEW, Uri.parse("sbixify://play/" + Uri.encode(key)), ctx, MainActivity.class);
+                String shortLabel = label.length() > 24 ? label.substring(0, 23) + "\u2026" : label;
+                android.content.pm.ShortcutInfo si = new android.content.pm.ShortcutInfo.Builder(ctx, id)
+                        .setShortLabel(shortLabel)
+                        .setLongLabel(label.length() > 60 ? label.substring(0, 59) + "\u2026" : label)
+                        .setIcon(android.graphics.drawable.Icon.createWithResource(ctx, ctx.getApplicationInfo().icon))
+                        .setIntent(it)
+                        .build();
+                list.add(si);
+            }
+            sm.setDynamicShortcuts(list);
+            call.resolve();
+        } catch (Exception e) {
+            call.resolve();
+        }
+    }
+
     @PluginMethod
     public void takeSharedText(PluginCall call) {
         String t = sharedText;

@@ -4434,6 +4434,13 @@
         // qui estraiamo il link e apriamo la playlist/album/artista come se l'avessi incollato.
         function handleSharedText(text) {
             const t = String(text || '');
+            const sc = t.match(/^sbixify:\/\/play\/(.+)$/);
+            if (sc) {
+                let key = '';
+                try { key = decodeURIComponent(sc[1]); } catch (e) { key = sc[1]; }
+                playPlaylistFromShortcut(key);
+                return;
+            }
             const m = t.match(/open\.spotify\.com\/(?:[a-z-]+\/)?(playlist|album|artist)\/([a-zA-Z0-9]{15,25})/i)
                    || t.match(/spotify:(playlist|album|artist):([a-zA-Z0-9]{15,25})/i);
             if (!m) { try { showToast('Questo non è un link Spotify di playlist, album o artista'); } catch (e) {} return; }
@@ -4448,6 +4455,79 @@
             setTimeout(() => { try { importSpotifyPlaylist(url); } catch (e) {} }, delay);
         }
         window.addEventListener('load', () => { window.__sbxOnShared = handleSharedText; });
+
+        // --- SCORCIATOIE PLAYLIST (routine Samsung, pressione lunga sull'icona dell'app) ---
+        // Apre la playlist e fa partire il primo brano. La chiave e' "my:<id>" (playlist create nell'app)
+        // oppure "url:<indirizzo>" (playlist importate / recenti).
+        async function playPlaylistFromShortcut(key) {
+            let delay = 0;
+            try { document.getElementById('apiModal')?.classList.remove('active'); } catch (e) {}
+            try { if (driveModeOpen) { closeDriveMode(); delay = 450; } } catch (e) {}
+            try {
+                const sheet = document.getElementById('nowPlayingSheet');
+                if (sheet && sheet.classList.contains('expanded')) { closeNowPlayingSheet(); delay = 450; }
+            } catch (e) {}
+            if (delay) await new Promise((r) => setTimeout(r, delay));
+            try {
+                if (key.indexOf('my:') === 0) {
+                    window.sbxOpenMyPlaylist(key.slice(3));
+                } else if (key.indexOf('url:') === 0) {
+                    const url = key.slice(4);
+                    if (url.startsWith(YTM_URL_PREFIX)) await openYtmPlaylist(url);
+                    else if (url.startsWith(ARTIST_SEARCH_URL_PREFIX)) await reopenArtistSearchPlaylist(url);
+                    else if (url.startsWith(ALBUM_SEARCH_URL_PREFIX)) await reopenAlbumSearchPlaylist(url);
+                    else await importSpotifyPlaylist(url);
+                } else {
+                    return;
+                }
+                if (appState.tracks && appState.tracks.length) await loadTrack(0);
+                else showToast('Playlist vuota');
+            } catch (e) {
+                try { showToast('Non riesco ad avviare la playlist'); } catch (e2) {}
+            }
+        }
+
+        function sbxShortcutHash(s) {
+            let h = 5381;
+            for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+            return (h >>> 0).toString(36);
+        }
+        function sbxCollectShortcuts() {
+            const out = [];
+            const seen = {};
+            function add(key, label) {
+                label = String(label || '').trim();
+                if (!label || !key || seen[key]) return;
+                seen[key] = 1;
+                out.push({ id: 'pl_' + sbxShortcutHash(key), key: key, label: label });
+            }
+            try { (window.sbxListMyPlaylists ? window.sbxListMyPlaylists() : []).forEach((l) => add('my:' + l.id, l.name)); } catch (e) {}
+            try {
+                loadRecentPlaylists().forEach((it) => {
+                    let n = it.name;
+                    try { if (typeof formatRecentPlaylistName === 'function') n = formatRecentPlaylistName(it.name) || it.name; } catch (e) {}
+                    add('url:' + it.url, n);
+                });
+            } catch (e) {}
+            return out.slice(0, 12);
+        }
+        let sbxShortcutSig = '';
+        function sbxPublishShortcuts() {
+            try {
+                const np = nativeHttp();
+                if (!np || !np.setShortcuts) return;
+                const items = sbxCollectShortcuts();
+                const sig = JSON.stringify(items.map((i) => i.key + '|' + i.label));
+                if (sig === sbxShortcutSig) return;
+                sbxShortcutSig = sig;
+                Promise.resolve(np.setShortcuts({ items: items })).catch(() => {});
+            } catch (e) {}
+        }
+        window.addEventListener('load', () => {
+            setTimeout(sbxPublishShortcuts, 5000);
+            setInterval(sbxPublishShortcuts, 60000);
+        });
+        document.addEventListener('visibilitychange', () => { if (document.hidden) sbxPublishShortcuts(); });
 
 
         // onPlayerReady usa variabili dichiarate più avanti nello script: lo rimandiamo a
@@ -11340,6 +11420,9 @@
             if (typeof updateEmptyHomeState === 'function') updateEmptyHomeState();
         }
         window.sbxRenderMyPlaylists = renderMyPlaylists;
+        window.sbxListMyPlaylists = function () {
+            return load().lists.filter(function (l) { return l.id !== 'liked' || l.tracks.length > 0; }).map(function (l) { return { id: l.id, name: l.name }; });
+        };
         window.sbxHasMyPlaylists = function () { return load().lists.some(function (l) { return l.tracks.length > 0 || l.id !== 'liked'; }); };
 
         /* ---------------- ricerca: playlist personali al posto di quelle di YouTube Music ---------------- */
