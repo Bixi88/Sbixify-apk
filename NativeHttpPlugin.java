@@ -734,7 +734,7 @@ public class NativeHttpPlugin extends Plugin {
                     return;
                 }
                 long now = android.os.SystemClock.elapsedRealtime();
-                if (now - scanStartedAt > 20000) {      // sicurezza estrema: la vera sicurezza e' il watchdog (scanAutoStop)
+                if (now - scanStartedAt > 60000) {      // sicurezza estrema: se il rilascio non arriva mai
                     scanDir = 0;
                     return;
                 }
@@ -830,11 +830,9 @@ public class NativeHttpPlugin extends Plugin {
                                     || code == android.view.KeyEvent.KEYCODE_MEDIA_REWIND) {
                                 int dir = code == android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD ? 1 : -1;
                                 if (ke.getAction() == android.view.KeyEvent.ACTION_DOWN) {
+                                    // Nessun timeout: si scorre finche' l'auto non manda il rilascio (ACTION_UP)
+                                    mpHandler.removeCallbacks(scanAutoStop);
                                     startScan(dir);
-                                    // tasto che si ripete: watchdog corto rinnovato a ogni ripetizione;
-                                    // primo evento: breve, a meno che si sia gia' visto un rilascio vero
-                                    long wd = ke.getRepeatCount() > 0 ? 700 : (upSeen ? 10000 : 1500);
-                                    armScanWatchdog(wd);
                                     debugKey((dir > 0 ? "FF" : "REW") + " DOWN rep=" + ke.getRepeatCount());
                                 } else if (ke.getAction() == android.view.KeyEvent.ACTION_UP) {
                                     upSeen = true;
@@ -969,6 +967,7 @@ public class NativeHttpPlugin extends Plugin {
     }
 
     private static void skipFromSession(String action) {
+        stopScan();
         NativeHttpPlugin p = instanceRef;
         if (p != null) {
             p.emit(action, 0);
