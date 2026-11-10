@@ -734,7 +734,7 @@ public class NativeHttpPlugin extends Plugin {
                     return;
                 }
                 long now = android.os.SystemClock.elapsedRealtime();
-                if (now - scanStartedAt > 10000) {      // sicurezza: se il rilascio non arriva mai, ci si ferma da soli
+                if (now - scanStartedAt > 20000) {      // sicurezza estrema: la vera sicurezza e' il watchdog (scanAutoStop)
                     scanDir = 0;
                     return;
                 }
@@ -786,10 +786,34 @@ public class NativeHttpPlugin extends Plugin {
         }
     };
 
+    // Watchdog: lo scorrimento si ferma da solo se non arrivano piu' eventi del tasto.
+    // L'Uconnect (come molte autoradio) puo' non mandare mai il "rilascio": senza watchdog lo scorrimento
+    // continuava fino a fine/inizio brano.
+    private static boolean upSeen = false;          // true dopo aver visto almeno un rilascio vero dall'auto
+    static final boolean DEBUG_KEYS = true;         // mostra un toast con il tasto ricevuto (mettere false a test finito)
+
+    private static void armScanWatchdog(long ms) {
+        mpHandler.removeCallbacks(scanAutoStop);
+        mpHandler.postDelayed(scanAutoStop, ms);
+    }
+
+    private static void debugKey(String msg) {
+        if (!DEBUG_KEYS) {
+            return;
+        }
+        try {
+            NativeHttpPlugin p = instanceRef;
+            if (p != null && p.getContext() != null) {
+                android.widget.Toast.makeText(p.getContext(), msg, android.widget.Toast.LENGTH_SHORT).show();
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
     static void startScanTimed(int dir) {
         startScan(dir);
-        mpHandler.removeCallbacks(scanAutoStop);
-        mpHandler.postDelayed(scanAutoStop, 3000);
+        armScanWatchdog(1500);                      // ogni comando ripetuto rinnova il watchdog
+        debugKey("cmd " + (dir > 0 ? "FF" : "REW"));
     }
 
     private static final androidx.media3.session.MediaSession.Callback sessionCallback =
@@ -806,10 +830,16 @@ public class NativeHttpPlugin extends Plugin {
                                     || code == android.view.KeyEvent.KEYCODE_MEDIA_REWIND) {
                                 int dir = code == android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD ? 1 : -1;
                                 if (ke.getAction() == android.view.KeyEvent.ACTION_DOWN) {
-                                    mpHandler.removeCallbacks(scanAutoStop);
                                     startScan(dir);
+                                    // tasto che si ripete: watchdog corto rinnovato a ogni ripetizione;
+                                    // primo evento: breve, a meno che si sia gia' visto un rilascio vero
+                                    long wd = ke.getRepeatCount() > 0 ? 700 : (upSeen ? 10000 : 1500);
+                                    armScanWatchdog(wd);
+                                    debugKey((dir > 0 ? "FF" : "REW") + " DOWN rep=" + ke.getRepeatCount());
                                 } else if (ke.getAction() == android.view.KeyEvent.ACTION_UP) {
+                                    upSeen = true;
                                     stopScan();
+                                    debugKey((dir > 0 ? "FF" : "REW") + " UP");
                                 }
                                 return true;
                             }
