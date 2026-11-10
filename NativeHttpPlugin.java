@@ -721,6 +721,105 @@ public class NativeHttpPlugin extends Plugin {
         }
     };
 
+    // Tasto avanti/indietro TENUTO PREMUTO sull'auto (Uconnect manda "avanzamento veloce" / "riavvolgimento"):
+    // finche' il tasto resta premuto il brano scorre in avanti o indietro, al rilascio si ferma.
+    private static int scanDir = 0;
+    private static long scanStartedAt = 0;
+    private static final Runnable scanTick = new Runnable() {
+        @Override
+        public void run() {
+            try {
+                if (scanDir == 0 || exo == null) {
+                    scanDir = 0;
+                    return;
+                }
+                long now = android.os.SystemClock.elapsedRealtime();
+                if (now - scanStartedAt > 10000) {      // sicurezza: se il rilascio non arriva mai, ci si ferma da soli
+                    scanDir = 0;
+                    return;
+                }
+                long dur = exo.getDuration();
+                long target = exo.getCurrentPosition() + scanDir * 4000L;   // 4 s ogni 0,4 s: circa 10 volte la velocita'
+                boolean stop = false;
+                if (target <= 0) {
+                    target = 0;
+                    stop = true;
+                }
+                if (dur > 0 && target > dur - 1500) {   // non si arriva fino alla fine: il brano successivo lo decide l'app
+                    target = Math.max(0, dur - 1500);
+                    stop = true;
+                }
+                exo.seekTo(target);
+                if (stop) {
+                    scanDir = 0;
+                    return;
+                }
+                mpHandler.postDelayed(this, 400);
+            } catch (Exception e) {
+                scanDir = 0;
+            }
+        }
+    };
+
+    private static void startScan(int dir) {
+        if (scanDir == dir) {
+            return;
+        }
+        scanDir = dir;
+        scanStartedAt = android.os.SystemClock.elapsedRealtime();
+        mpHandler.removeCallbacks(scanTick);
+        mpHandler.post(scanTick);
+    }
+
+    private static void stopScan() {
+        scanDir = 0;
+        mpHandler.removeCallbacks(scanTick);
+        mpHandler.removeCallbacks(scanAutoStop);
+    }
+
+    // Se l'auto manda il comando "avanzamento veloce" come comando e non come tasto (senza segnale di rilascio),
+    // lo scorrimento dura 3 secondi e si rinnova a ogni comando ripetuto.
+    private static final Runnable scanAutoStop = new Runnable() {
+        @Override
+        public void run() {
+            stopScan();
+        }
+    };
+
+    static void startScanTimed(int dir) {
+        startScan(dir);
+        mpHandler.removeCallbacks(scanAutoStop);
+        mpHandler.postDelayed(scanAutoStop, 3000);
+    }
+
+    private static final androidx.media3.session.MediaSession.Callback sessionCallback =
+            new androidx.media3.session.MediaSession.Callback() {
+                @Override
+                public boolean onMediaButtonEvent(androidx.media3.session.MediaSession session,
+                                                  androidx.media3.session.MediaSession.ControllerInfo controller,
+                                                  Intent intent) {
+                    try {
+                        android.view.KeyEvent ke = intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT);
+                        if (ke != null) {
+                            int code = ke.getKeyCode();
+                            if (code == android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD
+                                    || code == android.view.KeyEvent.KEYCODE_MEDIA_REWIND) {
+                                int dir = code == android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD ? 1 : -1;
+                                if (ke.getAction() == android.view.KeyEvent.ACTION_DOWN) {
+                                    mpHandler.removeCallbacks(scanAutoStop);
+                                    startScan(dir);
+                                } else if (ke.getAction() == android.view.KeyEvent.ACTION_UP) {
+                                    stopScan();
+                                }
+                                return true;
+                            }
+                        }
+                    } catch (Exception ignored) {
+                    }
+                    return false;
+                }
+            };
+
     /** Player esposto alla MediaSession: aggiunge "brano successivo / precedente" (li decide la pagina web). */
     static final class SbxPlayer extends androidx.media3.common.ForwardingPlayer {
         SbxPlayer(androidx.media3.common.Player p) {
@@ -734,6 +833,8 @@ public class NativeHttpPlugin extends Plugin {
                     .add(COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
                     .add(COMMAND_SEEK_TO_PREVIOUS)
                     .add(COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+                    .add(COMMAND_SEEK_FORWARD)
+                    .add(COMMAND_SEEK_BACK)
                     .remove(COMMAND_SET_REPEAT_MODE)      // la coda e il repeat li gestisce l'app, non gli altoparlanti/l'auto
                     .remove(COMMAND_SET_SHUFFLE_MODE)
                     .build();
@@ -745,7 +846,8 @@ public class NativeHttpPlugin extends Plugin {
                 return false;
             }
             if (command == COMMAND_SEEK_TO_NEXT || command == COMMAND_SEEK_TO_NEXT_MEDIA_ITEM
-                    || command == COMMAND_SEEK_TO_PREVIOUS || command == COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM) {
+                    || command == COMMAND_SEEK_TO_PREVIOUS || command == COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM
+                    || command == COMMAND_SEEK_FORWARD || command == COMMAND_SEEK_BACK) {
                 return true;
             }
             return super.isCommandAvailable(command);
@@ -793,6 +895,16 @@ public class NativeHttpPlugin extends Plugin {
         @Override
         public boolean getShuffleModeEnabled() {
             return false;
+        }
+
+        @Override
+        public void seekForward() {
+            startScanTimed(1);
+        }
+
+        @Override
+        public void seekBack() {
+            startScanTimed(-1);
         }
 
         @Override
@@ -963,7 +1075,7 @@ public class NativeHttpPlugin extends Plugin {
         } catch (Exception ignored) {
         }
         androidx.media3.session.MediaSession.Builder sb =
-                new androidx.media3.session.MediaSession.Builder(app, new SbxPlayer(exo)).setId("sbixify");
+                new androidx.media3.session.MediaSession.Builder(app, new SbxPlayer(exo)).setId("sbixify").setCallback(sessionCallback);
         if (open != null) {
             sb.setSessionActivity(open);
         }
