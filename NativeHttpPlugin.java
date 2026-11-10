@@ -735,6 +735,7 @@ public class NativeHttpPlugin extends Plugin {
                 }
                 if (!exo.getPlayWhenReady()) {          // messo in pausa: lo scorrimento finisce
                     scanDir = 0;
+                    scheduleResync();
                     return;
                 }
                 long now = android.os.SystemClock.elapsedRealtime();
@@ -756,6 +757,7 @@ public class NativeHttpPlugin extends Plugin {
                 exo.seekTo(target);
                 if (stop) {
                     scanDir = 0;
+                    scheduleResync();
                     return;
                 }
                 mpHandler.postDelayed(this, 400);
@@ -776,9 +778,40 @@ public class NativeHttpPlugin extends Plugin {
     }
 
     private static void stopScan() {
+        boolean was = scanDir != 0;
         scanDir = 0;
         mpHandler.removeCallbacks(scanTick);
         mpHandler.removeCallbacks(scanAutoStop);
+        if (was) {
+            scheduleResync();
+        }
+    }
+
+    // Dopo uno scorrimento a colpi di seekTo la pagina puo' restare con lo stato "in caricamento" e senza
+    // i "tick" di posizione (il contatore si blocca anche se l'audio va). A scorrimento finito, dopo un attimo,
+    // si rimanda alla pagina lo stato reale del player e si riavvia il ciclo dei tick.
+    private static final Runnable resyncRun = new Runnable() {
+        @Override
+        public void run() {
+            try {
+                if (exo == null || scanDir != 0) {
+                    return;
+                }
+                mpHandler.removeCallbacks(mpTick);
+                if (exo.getPlayWhenReady() && exo.getPlaybackState() == androidx.media3.common.Player.STATE_READY) {
+                    emitAudio("playing", 0, 0);
+                    mpHandler.postDelayed(mpTick, 1000);
+                } else if (exo.getPlayWhenReady() && exo.getPlaybackState() == androidx.media3.common.Player.STATE_BUFFERING) {
+                    mpHandler.postDelayed(this, 300);   // ancora in caricamento: riprova tra poco
+                }
+            } catch (Exception ignored) {
+            }
+        }
+    };
+
+    private static void scheduleResync() {
+        mpHandler.removeCallbacks(resyncRun);
+        mpHandler.postDelayed(resyncRun, 350);
     }
 
     // Se l'auto manda il comando "avanzamento veloce" come comando e non come tasto (senza segnale di rilascio),
@@ -893,9 +926,8 @@ public class NativeHttpPlugin extends Plugin {
         // perche' e' l'app a passare al successivo. I comandi dell'app stessa non passano da qui.
         @Override
         public void pause() {
-            if (scanDir != 0) {         // durante lo scorrimento il tasto play/pausa serve solo a fermarlo
-                stopScan();
-                return;
+            if (scanDir != 0) {         // play/pausa durante lo scorrimento: ferma lo scorrimento E mette davvero in pausa
+                stopScan();             // (l'auto abbassa il volume al "pause": il player deve fermarsi sul serio)
             }
             super.pause();
         }
@@ -903,8 +935,7 @@ public class NativeHttpPlugin extends Plugin {
         @Override
         public void play() {
             if (scanDir != 0) {
-                stopScan();
-                return;
+                stopScan();             // poi prosegue: riprende/continua la riproduzione normalmente
             }
             if (getPlaybackState() == androidx.media3.common.Player.STATE_ENDED) {
                 return;
@@ -916,7 +947,6 @@ public class NativeHttpPlugin extends Plugin {
         public void setPlayWhenReady(boolean playWhenReady) {
             if (scanDir != 0) {
                 stopScan();
-                return;
             }
             if (playWhenReady && getPlaybackState() == androidx.media3.common.Player.STATE_ENDED) {
                 return;
