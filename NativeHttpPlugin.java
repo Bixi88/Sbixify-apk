@@ -733,6 +733,10 @@ public class NativeHttpPlugin extends Plugin {
                     scanDir = 0;
                     return;
                 }
+                if (!exo.getPlayWhenReady()) {          // messo in pausa: lo scorrimento finisce
+                    scanDir = 0;
+                    return;
+                }
                 long now = android.os.SystemClock.elapsedRealtime();
                 if (now - scanStartedAt > 60000) {      // sicurezza estrema: se il rilascio non arriva mai
                     scanDir = 0;
@@ -832,7 +836,11 @@ public class NativeHttpPlugin extends Plugin {
                                 if (ke.getAction() == android.view.KeyEvent.ACTION_DOWN) {
                                     // Nessun timeout: si scorre finche' l'auto non manda il rilascio (ACTION_UP)
                                     mpHandler.removeCallbacks(scanAutoStop);
-                                    startScan(dir);
+                                    if (scanDir != 0 && scanDir != dir) {
+                                        stopScan();     // tasto opposto = stop
+                                    } else {
+                                        startScan(dir);
+                                    }
                                     debugKey((dir > 0 ? "FF" : "REW") + " DOWN rep=" + ke.getRepeatCount());
                                 } else if (ke.getAction() == android.view.KeyEvent.ACTION_UP) {
                                     upSeen = true;
@@ -884,7 +892,20 @@ public class NativeHttpPlugin extends Plugin {
         // Richieste dall'esterno (Echo, auto, cuffie) a brano FINITO: non devono far ripartire il brano appena finito,
         // perche' e' l'app a passare al successivo. I comandi dell'app stessa non passano da qui.
         @Override
+        public void pause() {
+            if (scanDir != 0) {         // durante lo scorrimento il tasto play/pausa serve solo a fermarlo
+                stopScan();
+                return;
+            }
+            super.pause();
+        }
+
+        @Override
         public void play() {
+            if (scanDir != 0) {
+                stopScan();
+                return;
+            }
             if (getPlaybackState() == androidx.media3.common.Player.STATE_ENDED) {
                 return;
             }
@@ -893,6 +914,10 @@ public class NativeHttpPlugin extends Plugin {
 
         @Override
         public void setPlayWhenReady(boolean playWhenReady) {
+            if (scanDir != 0) {
+                stopScan();
+                return;
+            }
             if (playWhenReady && getPlaybackState() == androidx.media3.common.Player.STATE_ENDED) {
                 return;
             }
@@ -967,7 +992,11 @@ public class NativeHttpPlugin extends Plugin {
     }
 
     private static void skipFromSession(String action) {
-        stopScan();
+        if (scanDir != 0) {             // durante lo scorrimento avanti/indietro brano servono solo a fermarlo
+            stopScan();
+            debugKey("stop scorrimento");
+            return;
+        }
         NativeHttpPlugin p = instanceRef;
         if (p != null) {
             p.emit(action, 0);
