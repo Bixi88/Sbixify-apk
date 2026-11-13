@@ -3937,6 +3937,12 @@
             }
 
             async _onAudioError() {
+                // Errore/stallo negli ultimi secondi (tipico dopo una pausa lunga, es. telefonata): il brano e'
+                // di fatto finito, si passa al successivo invece di restare bloccati senza audio.
+                try {
+                    const d = this.a.duration, c = this.a.currentTime;
+                    if (this._started && Number.isFinite(d) && d > 0 && (d - c) < 12) { this._emit(PS.ENDED); return; }
+                } catch (e) {}
                 if (this._started && this._retries < 2) {
                     // Errore a metà brano (URL scaduto, rete): rigenera l'URL e riprende da dove era
                     this._retries++;

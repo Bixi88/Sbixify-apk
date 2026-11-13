@@ -1086,6 +1086,66 @@ public class NativeHttpPlugin extends Plugin {
                 .build();
     }
 
+    // Watchdog sullo stallo: dopo una telefonata (pausa lunga) la connessione verso YouTube puo' essere morta
+    // e il player resta in "caricamento" per sempre vicino alla fine: niente audio, niente "ended", niente "error".
+    // L'auto continua a far correre il minutaggio e poi lo riporta indietro di qualche secondo, in loop.
+    // Se il player e' bloccato in caricamento da piu' di 8 s: negli ultimi 12 s si considera il brano finito
+    // (la pagina passa al successivo), altrimenti si segnala errore e la pagina rigenera l'URL e riprende da li'.
+    private static long stallSince = 0;
+    private static final Runnable stallCheck = new Runnable() {
+        @Override
+        public void run() {
+            try {
+                if (exo != null) {
+                    boolean stalled = exo.getPlayWhenReady()
+                            && exo.getPlaybackState() == androidx.media3.common.Player.STATE_BUFFERING
+                            && mpMetaSent && scanDir == 0;
+                    long now = android.os.SystemClock.elapsedRealtime();
+                    if (!stalled) {
+                        stallSince = 0;
+                    } else if (stallSince == 0) {
+                        stallSince = now;
+                    } else if (now - stallSince > 8000) {
+                        stallSince = 0;
+                        if (nearEnd(12000)) {
+                            forceEnded();
+                        } else {
+                            emitAudio("error", -3, 0);
+                        }
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+            mpHandler.postDelayed(this, 1000);
+        }
+    };
+
+    /** Vero se la durata e' nota e mancano al massimo ms millisecondi alla fine. */
+    private static boolean nearEnd(long ms) {
+        try {
+            if (exo == null) {
+                return false;
+            }
+            long dur = exo.getDuration();
+            long pos = exo.getCurrentPosition();
+            return dur > 0 && pos >= 0 && dur - pos <= ms;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** Fine brano "forzata": ferma il player (prima, cosi' la pausa non si sovrappone al brano dopo) e avvisa la pagina. */
+    private static void forceEnded() {
+        try {
+            mpHandler.removeCallbacks(mpTick);
+            if (exo != null) {
+                exo.pause();
+            }
+        } catch (Exception ignored) {
+        }
+        emitAudio("ended", 0, 0);
+    }
+
     /** Crea ExoPlayer e la sessione Media3 (una volta sola). Solo sul thread principale. */
     private static void ensureExo(Context ctx) {
         if (exo != null) {
@@ -1102,6 +1162,8 @@ public class NativeHttpPlugin extends Plugin {
                 .build();
         exo.setVolume(mpMuted ? 0f : mpVol);
         exo.setRepeatMode(androidx.media3.common.Player.REPEAT_MODE_OFF);
+        mpHandler.removeCallbacks(stallCheck);
+        mpHandler.postDelayed(stallCheck, 1000);
         exo.addListener(new androidx.media3.common.Player.Listener() {
             @Override
             public void onPlaybackStateChanged(int state) {
@@ -1139,6 +1201,12 @@ public class NativeHttpPlugin extends Plugin {
             @Override
             public void onPlayerError(androidx.media3.common.PlaybackException error) {
                 mpHandler.removeCallbacks(mpTick);
+                // Errore di rete negli ultimi secondi (tipico dopo una lunga pausa, es. una telefonata: l'ultimo
+                // blocco da YouTube non arriva piu'): il brano e' di fatto finito, si passa al successivo.
+                if (nearEnd(12000)) {
+                    forceEnded();
+                    return;
+                }
                 emitAudio("error", error.errorCode, 0);
             }
 
@@ -1177,6 +1245,7 @@ public class NativeHttpPlugin extends Plugin {
             public void run() {
                 try {
                     mpHandler.removeCallbacks(mpTick);
+                    mpHandler.removeCallbacks(stallCheck);
                     if (m3 != null) {
                         m3.release();
                         m3 = null;
