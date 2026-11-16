@@ -4221,7 +4221,7 @@
         // browser: normale download). Importa: si sceglie il file con il selettore di sistema.
         // Solo i dati "veri" dell'utente; le cache (ricerche, testi, classifiche) si rigenerano da sole.
         const BACKUP_KEYS = ['sbixify_recent', 'sbixify_recent_playlists', 'sbixify_recent_tracks',
-                             'sbixify_repeat_enabled', 'sbixify_last_playback', 'sbixify_last_pos'];
+                             'sbixify_repeat_enabled', 'sbixify_last_playback', 'sbixify_last_pos', 'sbixify_playlist_resume'];
         window.addEventListener('load', () => {
             const msg = document.getElementById('backupMsg');
             const fileInput = document.getElementById('backupFile');
@@ -4465,6 +4465,41 @@
         // --- SCORCIATOIE PLAYLIST (routine Samsung, pressione lunga sull'icona dell'app) ---
         // Apre la playlist e fa partire il primo brano. La chiave e' "my:<id>" (playlist create nell'app)
         // oppure "url:<indirizzo>" (playlist importate / recenti).
+        // --- RIPRESA PER PLAYLIST (routine Bluetooth auto) ---
+        // Per ogni playlist ricordiamo l'ULTIMO brano avviato e quando. Quando la routine rilancia la
+        // playlist, riparte da quel brano (dall'inizio della canzone) invece che dal primo in alto.
+        // Se sono passati piu' di 4 giorni dall'ultimo ascolto, o il brano non e' piu' nella playlist
+        // (aggiornamento settimanale), si riparte dal primo.
+        const PL_RESUME_KEY = 'sbixify_playlist_resume';
+        const PL_RESUME_MAX_AGE_MS = 4 * 24 * 60 * 60 * 1000;
+        function sbxLoadPlResume() {
+            try { const o = JSON.parse(localStorage.getItem(PL_RESUME_KEY)); return (o && typeof o === 'object') ? o : {}; } catch (e) { return {}; }
+        }
+        function sbxRememberPlaylistTrack(listKey, track) {
+            try {
+                if (!listKey || String(listKey).indexOf('playlist:') !== 0 || !track) return;
+                const o = sbxLoadPlResume();
+                o[listKey] = { id: track.id || null, title: track.title || '', channel: track.channel || '', ts: Date.now() };
+                const keys = Object.keys(o);
+                if (keys.length > 30) {
+                    keys.sort((a, b) => (o[a].ts || 0) - (o[b].ts || 0));
+                    keys.slice(0, keys.length - 30).forEach((k) => { delete o[k]; });
+                }
+                localStorage.setItem(PL_RESUME_KEY, JSON.stringify(o));
+            } catch (e) {}
+        }
+        function sbxResumeIndexFor(listKey, tracks) {
+            try {
+                const r = sbxLoadPlResume()[listKey];
+                if (!r || !tracks || !tracks.length) return -1;
+                if (Date.now() - (r.ts || 0) > PL_RESUME_MAX_AGE_MS) return -1;
+                const norm = (x) => String(x || '').trim().toLowerCase();
+                let i = r.id ? tracks.findIndex((t) => t && t.id === r.id) : -1;
+                if (i < 0 && r.title) i = tracks.findIndex((t) => t && norm(t.title) === norm(r.title) && norm(t.channel) === norm(r.channel));
+                return i;
+            } catch (e) { return -1; }
+        }
+
         async function playPlaylistFromShortcut(key) {
             let delay = 0;
             try { document.getElementById('apiModal')?.classList.remove('active'); } catch (e) {}
@@ -4486,7 +4521,10 @@
                 } else {
                     return;
                 }
-                if (appState.tracks && appState.tracks.length) await loadTrack(0);
+                if (appState.tracks && appState.tracks.length) {
+                    const ri = sbxResumeIndexFor(currentLoadedKey, appState.tracks);
+                    await loadTrack(ri >= 0 ? ri : 0);
+                }
                 else showToast('Playlist vuota');
             } catch (e) {
                 try { showToast('Non riesco ad avviare la playlist'); } catch (e2) {}
@@ -10832,6 +10870,7 @@
                 listTitle: nowPlayingListTitle,
                 index: index
             });
+            sbxRememberPlaylistTrack(nowPlayingListKey, track);
 
             // Registra il brano nella home ("Canzoni") solo ora che ha un id YouTube
             // valido: qui è garantito, o era già presente o è appena stato risolto poco
