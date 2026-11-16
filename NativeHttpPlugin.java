@@ -847,9 +847,24 @@ public class NativeHttpPlugin extends Plugin {
         }
     }
 
+    // Lo scorrimento dura fino a 60 s da solo (limite in scanTick) e si ferma se si preme di nuovo lo stesso tasto.
+    // Comandi ripetuti ravvicinati (< 1,2 s) = lo stesso tasto ancora tenuto premuto; un comando dopo una pausa piu'
+    // lunga = nuovo tocco = stop.
+    private static long lastCmdAt = 0;
+    private static long lastKeyAt = 0;
+    private static boolean keyHeld = false;
+    private static final long NEW_PRESS_GAP_MS = 300;
+
     static void startScanTimed(int dir) {
+        long now = android.os.SystemClock.elapsedRealtime();
+        boolean newPress = now - lastCmdAt > NEW_PRESS_GAP_MS;
+        lastCmdAt = now;
+        if (scanDir == dir && newPress) {
+            stopScan();
+            debugKey("stop scorrimento (nuovo tocco)");
+            return;
+        }
         startScan(dir);
-        armScanWatchdog(1500);                      // ogni comando ripetuto rinnova il watchdog
         debugKey("cmd " + (dir > 0 ? "FF" : "REW"));
     }
 
@@ -867,17 +882,22 @@ public class NativeHttpPlugin extends Plugin {
                                     || code == android.view.KeyEvent.KEYCODE_MEDIA_REWIND) {
                                 int dir = code == android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD ? 1 : -1;
                                 if (ke.getAction() == android.view.KeyEvent.ACTION_DOWN) {
-                                    // Nessun timeout: si scorre finche' l'auto non manda il rilascio (ACTION_UP)
+                                    long now = android.os.SystemClock.elapsedRealtime();
+                                    boolean newPress = ke.getRepeatCount() == 0
+                                            && (!keyHeld || now - lastKeyAt > NEW_PRESS_GAP_MS);
+                                    keyHeld = true;
+                                    lastKeyAt = now;
                                     mpHandler.removeCallbacks(scanAutoStop);
-                                    if (scanDir != 0 && scanDir != dir) {
-                                        stopScan();     // tasto opposto = stop
-                                    } else {
-                                        startScan(dir);
+                                    if (scanDir != 0 && (scanDir != dir || newPress)) {
+                                        stopScan();     // nuovo tocco (stesso tasto o opposto) = stop
+                                    } else if (scanDir == 0 && newPress) {
+                                        startScan(dir); // parte e prosegue da solo (max 60 s)
                                     }
+                                    // DOWN ripetuti mentre il tasto e' tenuto: ignorati
                                     debugKey((dir > 0 ? "FF" : "REW") + " DOWN rep=" + ke.getRepeatCount());
                                 } else if (ke.getAction() == android.view.KeyEvent.ACTION_UP) {
                                     upSeen = true;
-                                    stopScan();
+                                    keyHeld = false;    // il rilascio NON ferma piu' lo scorrimento
                                     debugKey((dir > 0 ? "FF" : "REW") + " UP");
                                 }
                                 return true;
